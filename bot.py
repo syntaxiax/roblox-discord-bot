@@ -180,11 +180,15 @@ async def on_ready():
     print(f'🎮 Watching {len(GAME_IDS)} games')
     
     # Sync slash commands
-    try:
-        synced = await bot.tree.sync()
-        print(f"✅ Synced {len(synced)} slash command(s)")
-    except Exception as e:
-        print(f"❌ Failed to sync commands: {e}")
+try:
+    # Clear old commands first
+    bot.tree.clear_commands(guild=None)
+    await bot.tree.sync()
+    
+    synced = await bot.tree.sync()
+    print(f"✅ Synced {len(synced)} slash command(s)")
+except Exception as e:
+    print(f"❌ Failed to sync commands: {e}")
     
     # Start the auto-check loop
     if not auto_check_games.is_running():
@@ -255,3 +259,4 @@ if TOKEN:
     bot.run(TOKEN)
 else:
     print("❌ ERROR: DISCORD_TOKEN not found in environment variables!")
+
