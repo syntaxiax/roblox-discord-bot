@@ -253,7 +253,7 @@ async def permission_error(interaction: discord.Interaction, error: app_commands
     if isinstance(error, app_commands.MissingPermissions):
         await interaction.response.send_message("❌ You need Administrator permission to use this command!", ephemeral=True)
 
-python@bot.command(name='sync')
+@bot.command(name='sync')
 @commands.is_owner()
 async def sync(ctx):
     synced = await bot.tree.sync()
@@ -265,6 +265,7 @@ if TOKEN:
     bot.run(TOKEN)
 else:
     print("❌ ERROR: DISCORD_TOKEN not found in environment variables!")
+
 
 
 
