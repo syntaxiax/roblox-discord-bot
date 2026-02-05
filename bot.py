@@ -74,7 +74,6 @@ async def check_game_available(session, universe_id):
                         return True, game_data, "Available"
             
             # If all checks pass but no servers, still consider it available
-            # (might just be empty at the moment)
             return True, game_data, "Available"
             
     except Exception as e:
@@ -95,7 +94,69 @@ async def find_available_game(game_ids):
     
     return None, None
 
-@tasks.loop(minutes=2)  # Check every 2 minutes
+# ============================================
+# SLASH COMMANDS - DEFINED BEFORE on_ready
+# ============================================
+
+@bot.tree.command(name="checkgame", description="Manually check for available games right now")
+async def checkgame(interaction: discord.Interaction):
+    await interaction.response.send_message("🔍 Checking games now...", ephemeral=True)
+    await auto_check_games()
+
+@bot.tree.command(name="forcenext", description="Force switch to the next available game (Admin only)")
+@app_commands.checks.has_permissions(administrator=True)
+async def forcenext(interaction: discord.Interaction):
+    global current_game_id
+    current_game_id = None  # Reset current game
+    await interaction.response.send_message("🔄 Forcing check for next game...", ephemeral=True)
+    await auto_check_games()
+
+@bot.tree.command(name="addgame", description="Add a game to the monitoring list (Admin only)")
+@app_commands.describe(universe_id="The Roblox Universe ID of the game to add")
+@app_commands.checks.has_permissions(administrator=True)
+async def addgame(interaction: discord.Interaction, universe_id: int):
+    if universe_id not in GAME_IDS:
+        GAME_IDS.append(universe_id)
+        await interaction.response.send_message(f"✅ Added game `{universe_id}` to the monitoring list!", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"⚠️ Game `{universe_id}` is already in the list!", ephemeral=True)
+
+@bot.tree.command(name="removegame", description="Remove a game from the monitoring list (Admin only)")
+@app_commands.describe(universe_id="The Roblox Universe ID of the game to remove")
+@app_commands.checks.has_permissions(administrator=True)
+async def removegame(interaction: discord.Interaction, universe_id: int):
+    if universe_id in GAME_IDS:
+        GAME_IDS.remove(universe_id)
+        await interaction.response.send_message(f"✅ Removed game `{universe_id}` from the monitoring list!", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"⚠️ Game `{universe_id}` is not in the list!", ephemeral=True)
+
+@bot.tree.command(name="listgames", description="Show all games being monitored")
+async def listgames(interaction: discord.Interaction):
+    if GAME_IDS:
+        games_list = "\n".join([f"• `{game_id}`" for game_id in GAME_IDS])
+        embed = discord.Embed(
+            title="🎮 Monitored Games",
+            description=f"Currently monitoring **{len(GAME_IDS)}** game(s):\n\n{games_list}",
+            color=discord.Color.blue()
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    else:
+        await interaction.response.send_message("⚠️ No games in the monitoring list!", ephemeral=True)
+
+# Error handlers for slash commands
+@forcenext.error
+@addgame.error
+@removegame.error
+async def permission_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.MissingPermissions):
+        await interaction.response.send_message("❌ You need Administrator permission to use this command!", ephemeral=True)
+
+# ============================================
+# AUTO-CHECK TASK & BOT EVENTS
+# ============================================
+
+@tasks.loop(minutes=30)  # Check every 2 minutes
 async def auto_check_games():
     """Automatically check games and update the channel message"""
     global status_message, current_game_id
@@ -181,12 +242,10 @@ async def on_ready():
     
     # Sync slash commands
     try:
-        # Clear old commands first
-        bot.tree.clear_commands(guild=None)
-        await bot.tree.sync()
-        
         synced = await bot.tree.sync()
         print(f"✅ Synced {len(synced)} slash command(s)")
+        for cmd in synced:
+            print(f"   - /{cmd.name}")
     except Exception as e:
         print(f"❌ Failed to sync commands: {e}")
     
@@ -197,75 +256,9 @@ async def on_ready():
     # Do an immediate check on startup
     await auto_check_games()
 
-# SLASH COMMANDS
-
-@bot.tree.command(name="checkgame", description="Manually check for available games right now")
-async def checkgame(interaction: discord.Interaction):
-    await interaction.response.send_message("🔍 Checking games now...", ephemeral=True)
-    await auto_check_games()
-
-@bot.tree.command(name="forcenext", description="Force switch to the next available game (Admin only)")
-@app_commands.checks.has_permissions(administrator=True)
-async def forcenext(interaction: discord.Interaction):
-    global current_game_id
-    current_game_id = None  # Reset current game
-    await interaction.response.send_message("🔄 Forcing check for next game...", ephemeral=True)
-    await auto_check_games()
-
-@bot.tree.command(name="addgame", description="Add a game to the monitoring list (Admin only)")
-@app_commands.describe(universe_id="The Roblox Universe ID of the game to add")
-@app_commands.checks.has_permissions(administrator=True)
-async def addgame(interaction: discord.Interaction, universe_id: int):
-    if universe_id not in GAME_IDS:
-        GAME_IDS.append(universe_id)
-        await interaction.response.send_message(f"✅ Added game `{universe_id}` to the monitoring list!", ephemeral=True)
-    else:
-        await interaction.response.send_message(f"⚠️ Game `{universe_id}` is already in the list!", ephemeral=True)
-
-@bot.tree.command(name="removegame", description="Remove a game from the monitoring list (Admin only)")
-@app_commands.describe(universe_id="The Roblox Universe ID of the game to remove")
-@app_commands.checks.has_permissions(administrator=True)
-async def removegame(interaction: discord.Interaction, universe_id: int):
-    if universe_id in GAME_IDS:
-        GAME_IDS.remove(universe_id)
-        await interaction.response.send_message(f"✅ Removed game `{universe_id}` from the monitoring list!", ephemeral=True)
-    else:
-        await interaction.response.send_message(f"⚠️ Game `{universe_id}` is not in the list!", ephemeral=True)
-
-@bot.tree.command(name="listgames", description="Show all games being monitored")
-async def listgames(interaction: discord.Interaction):
-    if GAME_IDS:
-        games_list = "\n".join([f"• `{game_id}`" for game_id in GAME_IDS])
-        embed = discord.Embed(
-            title="🎮 Monitored Games",
-            description=f"Currently monitoring **{len(GAME_IDS)}** game(s):\n\n{games_list}",
-            color=discord.Color.blue()
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-    else:
-        await interaction.response.send_message("⚠️ No games in the monitoring list!", ephemeral=True)
-
-# Error handlers for slash commands
-@forcenext.error
-@addgame.error
-@removegame.error
-async def permission_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    if isinstance(error, app_commands.MissingPermissions):
-        await interaction.response.send_message("❌ You need Administrator permission to use this command!", ephemeral=True)
-
-@bot.command(name='sync')
-@commands.is_owner()
-async def sync(ctx):
-    synced = await bot.tree.sync()
-    await ctx.send(f"Synced {len(synced)} commands!")
-
 # Get token from environment variable
 TOKEN = os.getenv('DISCORD_TOKEN')
 if TOKEN:
     bot.run(TOKEN)
 else:
     print("❌ ERROR: DISCORD_TOKEN not found in environment variables!")
-
-
-
-
