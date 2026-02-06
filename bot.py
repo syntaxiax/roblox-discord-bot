@@ -51,83 +51,126 @@ async def check_game_available(session, game_id):
     Returns: (is_available, game_data, reason, place_id)
     """
     try:
+        print(f"\n🔍 Checking game ID: {game_id}")
+        
         # First, try to get universe ID (in case game_id is a place ID)
         universe_id = await get_universe_id_from_place(session, game_id)
         
         # If conversion failed, assume it's already a universe ID
         if universe_id is None:
+            print(f"   → Using {game_id} as Universe ID directly")
             universe_id = game_id
             place_id = None
         else:
+            print(f"   → Converted Place ID {game_id} to Universe ID {universe_id}")
             place_id = game_id
         
         # Step 1: Check if game exists via Games API
         games_url = f"https://games.roblox.com/v1/games?universeIds={universe_id}"
+        print(f"   → Fetching game data from API...")
         async with session.get(games_url) as response:
             if response.status != 200:
+                print(f"   ❌ API Error: Status {response.status}")
                 return False, None, "API Error", None
             
             data = await response.json()
+            print(f"   → API Response: {data}")
+            
             if not data.get('data') or len(data['data']) == 0:
+                print(f"   ❌ Game not found in API response")
                 return False, None, "Game Not Found", None
             
             game_data = data['data'][0]
+            print(f"   → Game found: {game_data.get('name')}")
+            print(f"   → isPlayable: {game_data.get('isPlayable')}")
+            print(f"   → rootPlaceId: {game_data.get('rootPlaceId')}")
             
             # Step 2: Check if game is playable
             if not game_data.get('isPlayable', False):
+                print(f"   ❌ Game is not playable")
                 return False, game_data, "Not Playable", game_data.get('rootPlaceId')
             
             # Step 3: Get the root place ID to check game status
             root_place_id = game_data.get('rootPlaceId')
             if not root_place_id:
+                print(f"   ❌ No root place ID found")
                 return False, game_data, "No Root Place", None
             
             # Step 4: Check game details via the place API
             details_url = f"https://games.roblox.com/v1/games/multiget-place-details?placeIds={root_place_id}"
+            print(f"   → Checking place details...")
             async with session.get(details_url) as details_response:
                 if details_response.status == 200:
                     details_data = await details_response.json()
+                    print(f"   → Place details: {details_data}")
+                    
                     if details_data and len(details_data) > 0:
                         place_details = details_data[0]
                         
                         # Check if place is banned or under review
                         if place_details.get('isBanned', False):
+                            print(f"   ❌ Place is banned")
                             return False, game_data, "Banned", root_place_id
                         
                         if place_details.get('isUnderReview', False):
+                            print(f"   ❌ Place is under review")
                             return False, game_data, "Under Review", root_place_id
+                else:
+                    print(f"   ⚠️ Could not fetch place details (status {details_response.status})")
             
             # Step 5: Check if we can get game instances (means it's actually running)
             instances_url = f"https://games.roblox.com/v1/games/{root_place_id}/servers/Public?limit=10"
+            print(f"   → Checking for active servers...")
             async with session.get(instances_url) as instances_response:
                 if instances_response.status == 200:
                     instances_data = await instances_response.json()
+                    server_count = len(instances_data.get('data', []))
+                    print(f"   → Found {server_count} active servers")
+                    
                     # If game has active servers, it's definitely available
-                    if instances_data.get('data') and len(instances_data['data']) > 0:
+                    if server_count > 0:
+                        print(f"   ✅ Game is available with {server_count} active servers")
                         return True, game_data, "Available", root_place_id
+                else:
+                    print(f"   ⚠️ Could not fetch servers (status {instances_response.status})")
             
             # If all checks pass but no servers, still consider it available
-            return True, game_data, "Available", root_place_id
+            # (Private servers or new games might not have public servers)
+            print(f"   ✅ Game appears available (no active servers found but no issues detected)")
+            return True, game_data, "Available (No Active Servers)", root_place_id
             
     except Exception as e:
-        print(f"Error checking game {game_id}: {e}")
+        print(f"   ❌ Exception checking game {game_id}: {e}")
+        import traceback
+        traceback.print_exc()
         return False, None, f"Error: {str(e)}", None
 
 async def find_available_game(game_ids):
     """Find the first available game from the list"""
-    print(f"🔍 Searching through {len(game_ids)} games...")
+    print(f"\n{'='*60}")
+    print(f"🔍 Searching through {len(game_ids)} games for available one...")
+    print(f"{'='*60}")
+    
     async with aiohttp.ClientSession() as session:
-        for game_id in game_ids:
+        for i, game_id in enumerate(game_ids, 1):
+            print(f"\n[{i}/{len(game_ids)}] Checking game {game_id}...")
             is_available, game_data, reason, place_id = await check_game_available(session, game_id)
-            print(f"   Game {game_id}: {reason}")
+            
+            print(f"\n📊 Result for {game_id}:")
+            print(f"   Status: {reason}")
+            print(f"   Available: {is_available}")
             
             if is_available and game_data:
-                print(f"✅ Found available game: {game_data['name']}")
+                print(f"\n✅ FOUND AVAILABLE GAME!")
+                print(f"   Name: {game_data['name']}")
+                print(f"   Place ID: {place_id or game_data.get('rootPlaceId')}")
+                print(f"{'='*60}\n")
                 return game_id, game_data, place_id
             
             await asyncio.sleep(0.5)  # Rate limiting
     
-    print("❌ No available games found")
+    print(f"\n❌ NO AVAILABLE GAMES FOUND IN LIST")
+    print(f"{'='*60}\n")
     return None, None, None
 
 # ============================================
@@ -487,3 +530,4 @@ if TOKEN:
     bot.run(TOKEN)
 else:
     print("❌ ERROR: DISCORD_TOKEN not found in environment variables!")
+
