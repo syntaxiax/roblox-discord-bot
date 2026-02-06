@@ -10,44 +10,77 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# CONFIGURATION - Change these values
+# CONFIGURATION - Now accepts Place IDs!
 CHANNEL_ID = None  # Will be set by /create command
 GAME_IDS = [
-    123456789,  # Replace with actual Roblox game universe IDs
-    987654321,
-    111222333,
+    18687417158,  # You can use Place IDs directly from URLs!
+    # Add more Place IDs here
 ]
+
+# Cache to store Place ID -> Universe ID mappings
+place_to_universe_cache = {}
 
 # Store the message ID and current game so we can edit it
 status_message = None
 current_game_id = None
 
-async def check_game_available(session, universe_id):
+async def get_universe_id_from_place(session, place_id):
+    """Convert a Place ID to Universe ID"""
+    # Check cache first
+    if place_id in place_to_universe_cache:
+        return place_to_universe_cache[place_id]
+    
+    try:
+        url = f"https://apis.roblox.com/universes/v1/places/{place_id}/universe"
+        async with session.get(url) as response:
+            if response.status == 200:
+                data = await response.json()
+                universe_id = data.get('universeId')
+                if universe_id:
+                    place_to_universe_cache[place_id] = universe_id
+                    return universe_id
+    except Exception as e:
+        print(f"Error converting Place ID {place_id} to Universe ID: {e}")
+    
+    return None
+
+async def check_game_available(session, game_id):
     """
     Comprehensive check if a Roblox game is available and joinable.
-    Returns: (is_available, game_data, reason)
+    Accepts either Place ID or Universe ID.
+    Returns: (is_available, game_data, reason, place_id)
     """
     try:
+        # First, try to get universe ID (in case game_id is a place ID)
+        universe_id = await get_universe_id_from_place(session, game_id)
+        
+        # If conversion failed, assume it's already a universe ID
+        if universe_id is None:
+            universe_id = game_id
+            place_id = None
+        else:
+            place_id = game_id
+        
         # Step 1: Check if game exists via Games API
         games_url = f"https://games.roblox.com/v1/games?universeIds={universe_id}"
         async with session.get(games_url) as response:
             if response.status != 200:
-                return False, None, "API Error"
+                return False, None, "API Error", None
             
             data = await response.json()
             if not data.get('data') or len(data['data']) == 0:
-                return False, None, "Game Not Found"
+                return False, None, "Game Not Found", None
             
             game_data = data['data'][0]
             
             # Step 2: Check if game is playable
             if not game_data.get('isPlayable', False):
-                return False, game_data, "Not Playable"
+                return False, game_data, "Not Playable", game_data.get('rootPlaceId')
             
             # Step 3: Get the root place ID to check game status
             root_place_id = game_data.get('rootPlaceId')
             if not root_place_id:
-                return False, game_data, "No Root Place"
+                return False, game_data, "No Root Place", None
             
             # Step 4: Check game details via the place API
             details_url = f"https://games.roblox.com/v1/games/multiget-place-details?placeIds={root_place_id}"
@@ -59,10 +92,10 @@ async def check_game_available(session, universe_id):
                         
                         # Check if place is banned or under review
                         if place_details.get('isBanned', False):
-                            return False, game_data, "Banned"
+                            return False, game_data, "Banned", root_place_id
                         
                         if place_details.get('isUnderReview', False):
-                            return False, game_data, "Under Review"
+                            return False, game_data, "Under Review", root_place_id
             
             # Step 5: Check if we can get game instances (means it's actually running)
             instances_url = f"https://games.roblox.com/v1/games/{root_place_id}/servers/Public?limit=10"
@@ -71,31 +104,31 @@ async def check_game_available(session, universe_id):
                     instances_data = await instances_response.json()
                     # If game has active servers, it's definitely available
                     if instances_data.get('data') and len(instances_data['data']) > 0:
-                        return True, game_data, "Available"
+                        return True, game_data, "Available", root_place_id
             
             # If all checks pass but no servers, still consider it available
-            return True, game_data, "Available"
+            return True, game_data, "Available", root_place_id
             
     except Exception as e:
-        print(f"Error checking game {universe_id}: {e}")
-        return False, None, f"Error: {str(e)}"
+        print(f"Error checking game {game_id}: {e}")
+        return False, None, f"Error: {str(e)}", None
 
 async def find_available_game(game_ids):
     """Find the first available game from the list"""
     print(f"🔍 Searching through {len(game_ids)} games...")
     async with aiohttp.ClientSession() as session:
         for game_id in game_ids:
-            is_available, game_data, reason = await check_game_available(session, game_id)
+            is_available, game_data, reason, place_id = await check_game_available(session, game_id)
             print(f"   Game {game_id}: {reason}")
             
             if is_available and game_data:
                 print(f"✅ Found available game: {game_data['name']}")
-                return game_id, game_data
+                return game_id, game_data, place_id
             
             await asyncio.sleep(0.5)  # Rate limiting
     
     print("❌ No available games found")
-    return None, None
+    return None, None, None
 
 # ============================================
 # SLASH COMMANDS - DEFINED BEFORE on_ready
@@ -216,36 +249,36 @@ async def forcenext(interaction: discord.Interaction):
         traceback.print_exc()
 
 @bot.tree.command(name="addgame", description="Add a game to the monitoring list (Admin only)")
-@app_commands.describe(universe_id="The Roblox Universe ID of the game to add")
+@app_commands.describe(place_id="The Roblox Place ID from the game URL (e.g., 18687417158)")
 @app_commands.checks.has_permissions(administrator=True)
-async def addgame(interaction: discord.Interaction, universe_id: int):
-    print(f"➕ /addgame {universe_id} called by {interaction.user}")
+async def addgame(interaction: discord.Interaction, place_id: int):
+    print(f"➕ /addgame {place_id} called by {interaction.user}")
     
-    if universe_id not in GAME_IDS:
-        GAME_IDS.append(universe_id)
+    if place_id not in GAME_IDS:
+        GAME_IDS.append(place_id)
         await interaction.response.send_message(
-            f"✅ Added game `{universe_id}` to the monitoring list!\n"
+            f"✅ Added game `{place_id}` to the monitoring list!\n"
             f"📊 Now monitoring {len(GAME_IDS)} game(s).",
             ephemeral=True
         )
     else:
-        await interaction.response.send_message(f"⚠️ Game `{universe_id}` is already in the list!", ephemeral=True)
+        await interaction.response.send_message(f"⚠️ Game `{place_id}` is already in the list!", ephemeral=True)
 
 @bot.tree.command(name="removegame", description="Remove a game from the monitoring list (Admin only)")
-@app_commands.describe(universe_id="The Roblox Universe ID of the game to remove")
+@app_commands.describe(place_id="The Roblox Place ID to remove")
 @app_commands.checks.has_permissions(administrator=True)
-async def removegame(interaction: discord.Interaction, universe_id: int):
-    print(f"➖ /removegame {universe_id} called by {interaction.user}")
+async def removegame(interaction: discord.Interaction, place_id: int):
+    print(f"➖ /removegame {place_id} called by {interaction.user}")
     
-    if universe_id in GAME_IDS:
-        GAME_IDS.remove(universe_id)
+    if place_id in GAME_IDS:
+        GAME_IDS.remove(place_id)
         await interaction.response.send_message(
-            f"✅ Removed game `{universe_id}` from the monitoring list!\n"
+            f"✅ Removed game `{place_id}` from the monitoring list!\n"
             f"📊 Now monitoring {len(GAME_IDS)} game(s).",
             ephemeral=True
         )
     else:
-        await interaction.response.send_message(f"⚠️ Game `{universe_id}` is not in the list!", ephemeral=True)
+        await interaction.response.send_message(f"⚠️ Game `{place_id}` is not in the list!", ephemeral=True)
 
 @bot.tree.command(name="listgames", description="Show all games being monitored")
 async def listgames(interaction: discord.Interaction):
@@ -313,9 +346,9 @@ async def auto_check_games():
     """Automatically check games and update the channel message"""
     global status_message, current_game_id
     
-    print(f"\n{'='*50}")
+    print("\n" + "="*50)
     print(f"🔄 Auto-check triggered at {discord.utils.utcnow()}")
-    print(f"{'='*50}")
+    print("="*50)
     
     if CHANNEL_ID is None:
         print("⚠️ No channel set, skipping check")
@@ -328,7 +361,7 @@ async def auto_check_games():
     
     print(f"📍 Checking games for channel: #{channel.name} ({CHANNEL_ID})")
     
-    game_id, game_data = await find_available_game(GAME_IDS)
+    game_id, game_data, place_id = await find_available_game(GAME_IDS)
     
     # Only update message if the game changed or if no message exists
     if game_id and game_data:
@@ -345,10 +378,12 @@ async def auto_check_games():
                 timestamp=discord.utils.utcnow()
             )
             
-            root_place_id = game_data.get('rootPlaceId', game_id)
-            embed.add_field(name="Universe ID", value=game_id, inline=True)
-            embed.add_field(name="Place ID", value=root_place_id, inline=True)
+            # Use the place_id returned from check_game_available
+            root_place_id = place_id or game_data.get('rootPlaceId', game_id)
+            
+            embed.add_field(name="Place ID", value=f"`{root_place_id}`", inline=True)
             embed.add_field(name="Playing", value=f"{game_data.get('playing', 0):,}", inline=True)
+            embed.add_field(name="Visits", value=f"{game_data.get('visits', 0):,}", inline=True)
             embed.add_field(
                 name="▶️ Join Game", 
                 value=f"[Click to Play](https://www.roblox.com/games/{root_place_id})", 
@@ -361,7 +396,7 @@ async def auto_check_games():
                     desc = desc[:197] + "..."
                 embed.add_field(name="Description", value=desc, inline=False)
             
-            embed.set_footer(text="🔄 Game switched • Auto-updates every 2 minutes")
+            embed.set_footer(text="🔄 Auto-updates every 2 minutes")
             
             if status_message:
                 try:
@@ -422,7 +457,7 @@ async def auto_check_games():
                 status_message = await channel.send(embed=embed)
                 print(f"📝 Created 'no games' status message (ID: {status_message.id})")
     
-    print(f"{'='*50}\n")
+    print("="*50 + "\n")
 
 @bot.event
 async def on_ready():
@@ -443,7 +478,8 @@ async def on_ready():
         traceback.print_exc()
     
     print("\n💡 Use /create in a channel to activate the bot!")
-    print("💡 Use /destroy to stop the bot and delete the message\n")
+    print("💡 Use /destroy to stop the bot and delete the message")
+    print("💡 Use /addgame with Place IDs from game URLs!\n")
 
 # Get token from environment variable
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -451,4 +487,3 @@ if TOKEN:
     bot.run(TOKEN)
 else:
     print("❌ ERROR: DISCORD_TOKEN not found in environment variables!")
-
