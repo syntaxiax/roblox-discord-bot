@@ -426,10 +426,10 @@ async def auto_check_games():
 
 @bot.event
 async def on_ready():
-    print(f'\n{'='*50}')
+    print('\n' + '='*50)
     print(f'✅ {bot.user} is now running!')
     print(f'📊 Bot is in {len(bot.guilds)} guilds')
-    print(f'{'='*50}\n')
+    print('='*50 + '\n')
     
     # Sync slash commands
     try:
@@ -451,3 +451,4 @@ if TOKEN:
     bot.run(TOKEN)
 else:
     print("❌ ERROR: DISCORD_TOKEN not found in environment variables!")
+
