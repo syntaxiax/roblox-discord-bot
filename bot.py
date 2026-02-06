@@ -74,7 +74,6 @@ async def check_game_available(session, game_id):
                 return False, None, "API Error", None
             
             data = await response.json()
-            print(f"   → API Response: {data}")
             
             if not data.get('data') or len(data['data']) == 0:
                 print(f"   ❌ Game not found in API response")
@@ -82,62 +81,48 @@ async def check_game_available(session, game_id):
             
             game_data = data['data'][0]
             print(f"   → Game found: {game_data.get('name')}")
-            print(f"   → isPlayable: {game_data.get('isPlayable')}")
+            print(f"   → Playing: {game_data.get('playing', 0)}")
             print(f"   → rootPlaceId: {game_data.get('rootPlaceId')}")
             
-            # Step 2: Check if game is playable
-            if not game_data.get('isPlayable', False):
-                print(f"   ❌ Game is not playable")
-                return False, game_data, "Not Playable", game_data.get('rootPlaceId')
-            
-            # Step 3: Get the root place ID to check game status
+            # Get the root place ID
             root_place_id = game_data.get('rootPlaceId')
             if not root_place_id:
                 print(f"   ❌ No root place ID found")
                 return False, game_data, "No Root Place", None
             
-            # Step 4: Check game details via the place API
+            # Step 2: Check game details via the place API - ONLY check for bans/review
             details_url = f"https://games.roblox.com/v1/games/multiget-place-details?placeIds={root_place_id}"
-            print(f"   → Checking place details...")
+            print(f"   → Checking if game is banned or under review...")
             async with session.get(details_url) as details_response:
                 if details_response.status == 200:
                     details_data = await details_response.json()
-                    print(f"   → Place details: {details_data}")
                     
                     if details_data and len(details_data) > 0:
                         place_details = details_data[0]
                         
                         # Check if place is banned or under review
-                        if place_details.get('isBanned', False):
-                            print(f"   ❌ Place is banned")
+                        is_banned = place_details.get('isBanned', False)
+                        is_under_review = place_details.get('isUnderReview', False)
+                        
+                        print(f"   → isBanned: {is_banned}")
+                        print(f"   → isUnderReview: {is_under_review}")
+                        
+                        if is_banned:
+                            print(f"   ❌ Place is BANNED")
                             return False, game_data, "Banned", root_place_id
                         
-                        if place_details.get('isUnderReview', False):
-                            print(f"   ❌ Place is under review")
+                        if is_under_review:
+                            print(f"   ❌ Place is UNDER REVIEW")
                             return False, game_data, "Under Review", root_place_id
                 else:
                     print(f"   ⚠️ Could not fetch place details (status {details_response.status})")
+                    # If we can't check ban status, assume it's okay
             
-            # Step 5: Check if we can get game instances (means it's actually running)
-            instances_url = f"https://games.roblox.com/v1/games/{root_place_id}/servers/Public?limit=10"
-            print(f"   → Checking for active servers...")
-            async with session.get(instances_url) as instances_response:
-                if instances_response.status == 200:
-                    instances_data = await instances_response.json()
-                    server_count = len(instances_data.get('data', []))
-                    print(f"   → Found {server_count} active servers")
-                    
-                    # If game has active servers, it's definitely available
-                    if server_count > 0:
-                        print(f"   ✅ Game is available with {server_count} active servers")
-                        return True, game_data, "Available", root_place_id
-                else:
-                    print(f"   ⚠️ Could not fetch servers (status {instances_response.status})")
-            
-            # If all checks pass but no servers, still consider it available
-            # (Private servers or new games might not have public servers)
-            print(f"   ✅ Game appears available (no active servers found but no issues detected)")
-            return True, game_data, "Available (No Active Servers)", root_place_id
+            # If we got here: game exists, not banned, not under review
+            # That's all we need - it's available!
+            playing_count = game_data.get('playing', 0)
+            print(f"   ✅ Game is AVAILABLE ({playing_count} players)")
+            return True, game_data, "Available", root_place_id
             
     except Exception as e:
         print(f"   ❌ Exception checking game {game_id}: {e}")
@@ -530,4 +515,3 @@ if TOKEN:
     bot.run(TOKEN)
 else:
     print("❌ ERROR: DISCORD_TOKEN not found in environment variables!")
-
