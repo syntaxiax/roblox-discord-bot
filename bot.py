@@ -82,16 +82,19 @@ async def check_game_available(session, universe_id):
 
 async def find_available_game(game_ids):
     """Find the first available game from the list"""
+    print(f"🔍 Searching through {len(game_ids)} games...")
     async with aiohttp.ClientSession() as session:
         for game_id in game_ids:
             is_available, game_data, reason = await check_game_available(session, game_id)
-            print(f"Game {game_id}: {reason}")
+            print(f"   Game {game_id}: {reason}")
             
             if is_available and game_data:
+                print(f"✅ Found available game: {game_data['name']}")
                 return game_id, game_data
             
             await asyncio.sleep(0.5)  # Rate limiting
     
+    print("❌ No available games found")
     return None, None
 
 # ============================================
@@ -102,6 +105,8 @@ async def find_available_game(game_ids):
 @app_commands.checks.has_permissions(administrator=True)
 async def create(interaction: discord.Interaction):
     global CHANNEL_ID, status_message, current_game_id
+    
+    print(f"📝 /create command called by {interaction.user} in channel {interaction.channel_id}")
     
     # Set the channel
     CHANNEL_ID = interaction.channel_id
@@ -118,10 +123,19 @@ async def create(interaction: discord.Interaction):
     
     # Start the auto-check if not running
     if not auto_check_games.is_running():
+        print("▶️ Starting auto_check_games task...")
         auto_check_games.start()
+    else:
+        print("ℹ️ auto_check_games task already running")
     
     # Do an immediate check
-    await auto_check_games()
+    print("🔍 Running immediate game check...")
+    try:
+        await auto_check_games()
+    except Exception as e:
+        print(f"❌ Error during immediate check: {e}")
+        import traceback
+        traceback.print_exc()
     
     print(f"✅ Bot activated in channel {CHANNEL_ID}")
 
@@ -129,6 +143,8 @@ async def create(interaction: discord.Interaction):
 @app_commands.checks.has_permissions(administrator=True)
 async def destroy(interaction: discord.Interaction):
     global CHANNEL_ID, status_message, current_game_id
+    
+    print(f"🗑️ /destroy command called by {interaction.user}")
     
     # Try to delete the status message
     if status_message:
@@ -166,8 +182,15 @@ async def checkgame(interaction: discord.Interaction):
         )
         return
     
+    print(f"🔍 /checkgame command called by {interaction.user}")
     await interaction.response.send_message("🔍 Checking games now...", ephemeral=True)
-    await auto_check_games()
+    
+    try:
+        await auto_check_games()
+    except Exception as e:
+        print(f"❌ Error during manual check: {e}")
+        import traceback
+        traceback.print_exc()
 
 @bot.tree.command(name="forcenext", description="Force switch to the next available game (Admin only)")
 @app_commands.checks.has_permissions(administrator=True)
@@ -181,14 +204,23 @@ async def forcenext(interaction: discord.Interaction):
         )
         return
     
+    print(f"🔄 /forcenext command called by {interaction.user}")
     current_game_id = None  # Reset current game
     await interaction.response.send_message("🔄 Forcing check for next game...", ephemeral=True)
-    await auto_check_games()
+    
+    try:
+        await auto_check_games()
+    except Exception as e:
+        print(f"❌ Error during force next: {e}")
+        import traceback
+        traceback.print_exc()
 
 @bot.tree.command(name="addgame", description="Add a game to the monitoring list (Admin only)")
 @app_commands.describe(universe_id="The Roblox Universe ID of the game to add")
 @app_commands.checks.has_permissions(administrator=True)
 async def addgame(interaction: discord.Interaction, universe_id: int):
+    print(f"➕ /addgame {universe_id} called by {interaction.user}")
+    
     if universe_id not in GAME_IDS:
         GAME_IDS.append(universe_id)
         await interaction.response.send_message(
@@ -203,6 +235,8 @@ async def addgame(interaction: discord.Interaction, universe_id: int):
 @app_commands.describe(universe_id="The Roblox Universe ID of the game to remove")
 @app_commands.checks.has_permissions(administrator=True)
 async def removegame(interaction: discord.Interaction, universe_id: int):
+    print(f"➖ /removegame {universe_id} called by {interaction.user}")
+    
     if universe_id in GAME_IDS:
         GAME_IDS.remove(universe_id)
         await interaction.response.send_message(
@@ -279,6 +313,10 @@ async def auto_check_games():
     """Automatically check games and update the channel message"""
     global status_message, current_game_id
     
+    print(f"\n{'='*50}")
+    print(f"🔄 Auto-check triggered at {discord.utils.utcnow()}")
+    print(f"{'='*50}")
+    
     if CHANNEL_ID is None:
         print("⚠️ No channel set, skipping check")
         return
@@ -288,13 +326,17 @@ async def auto_check_games():
         print(f"❌ Channel {CHANNEL_ID} not found!")
         return
     
+    print(f"📍 Checking games for channel: #{channel.name} ({CHANNEL_ID})")
+    
     game_id, game_data = await find_available_game(GAME_IDS)
     
     # Only update message if the game changed or if no message exists
     if game_id and game_data:
         # Check if this is a different game than what we're currently showing
-        if current_game_id != game_id:
+        if current_game_id != game_id or status_message is None:
             current_game_id = game_id
+            
+            print(f"📝 Creating/updating embed for: {game_data['name']}")
             
             embed = discord.Embed(
                 title="🎮 Available Game",
@@ -323,23 +365,38 @@ async def auto_check_games():
             
             if status_message:
                 try:
+                    print(f"✏️ Editing existing message...")
                     await status_message.edit(embed=embed)
                     print(f"✅ Updated to new game: {game_data['name']}")
                 except discord.NotFound:
+                    print(f"⚠️ Message not found, creating new one...")
                     status_message = await channel.send(embed=embed)
+                    print(f"📝 Created new status message (ID: {status_message.id})")
                 except Exception as e:
                     print(f"❌ Error editing message: {e}")
+                    import traceback
+                    traceback.print_exc()
                     status_message = await channel.send(embed=embed)
+                    print(f"📝 Created new status message (ID: {status_message.id})")
             else:
-                status_message = await channel.send(embed=embed)
-                print(f"📝 Created new status message for: {game_data['name']}")
+                print(f"📝 Creating new status message...")
+                try:
+                    status_message = await channel.send(embed=embed)
+                    print(f"✅ Created new status message (ID: {status_message.id}) for: {game_data['name']}")
+                except Exception as e:
+                    print(f"❌ Error creating message: {e}")
+                    import traceback
+                    traceback.print_exc()
         else:
-            # Same game still available, just update timestamp
+            # Same game still available
             print(f"ℹ️ Same game still available: {game_data['name']}")
     else:
         # No available games found
-        if current_game_id is not None:  # Only update if we had a game before
+        print("❌ No available games found")
+        if current_game_id is not None or status_message is None:
             current_game_id = None
+            
+            print("📝 Creating/updating 'no games' embed...")
             
             embed = discord.Embed(
                 title="⏳ No Available Games",
@@ -353,29 +410,37 @@ async def auto_check_games():
             if status_message:
                 try:
                     await status_message.edit(embed=embed)
-                    print("❌ No games available - updated message")
+                    print("✅ Updated to 'no games' message")
                 except discord.NotFound:
                     status_message = await channel.send(embed=embed)
+                    print(f"📝 Created 'no games' message (ID: {status_message.id})")
                 except Exception as e:
                     print(f"❌ Error editing message: {e}")
                     status_message = await channel.send(embed=embed)
+                    print(f"📝 Created 'no games' message (ID: {status_message.id})")
             else:
                 status_message = await channel.send(embed=embed)
-                print("📝 Created 'no games' status message")
+                print(f"📝 Created 'no games' status message (ID: {status_message.id})")
+    
+    print(f"{'='*50}\n")
 
 @bot.event
 async def on_ready():
+    print(f'\n{'='*50}')
     print(f'✅ {bot.user} is now running!')
     print(f'📊 Bot is in {len(bot.guilds)} guilds')
+    print(f'{'='*50}\n')
     
     # Sync slash commands
     try:
         synced = await bot.tree.sync()
-        print(f"✅ Synced {len(synced)} slash command(s)")
+        print(f"✅ Synced {len(synced)} slash command(s):")
         for cmd in synced:
             print(f"   - /{cmd.name}")
     except Exception as e:
         print(f"❌ Failed to sync commands: {e}")
+        import traceback
+        traceback.print_exc()
     
     print("\n💡 Use /create in a channel to activate the bot!")
     print("💡 Use /destroy to stop the bot and delete the message\n")
