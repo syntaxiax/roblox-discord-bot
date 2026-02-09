@@ -20,6 +20,7 @@ GAME_IDS = [
 ]
 
 ROBLOX_GROUP_ID = 34590562
+REQUIRED_ROLE_ID = 1259103468707250213
 ROBLOX_COOKIE = os.getenv('ROBLOX_COOKIE')
 
 # Cache to store Place ID -> Universe ID mappings
@@ -183,6 +184,36 @@ async def requestaccess(interaction: discord.Interaction, roblox_username: str):
     username = roblox_username.strip()
     
     print(f"📝 Join request from {interaction.user}: {username}")
+    
+    # Check if user has the required role
+    if REQUIRED_ROLE_ID is not None:
+        required_role = interaction.guild.get_role(REQUIRED_ROLE_ID)
+        
+        if required_role is None:
+            await interaction.followup.send(
+                "❌ Configuration error: Required role not found!",
+                ephemeral=True
+            )
+            print(f"❌ Required role {REQUIRED_ROLE_ID} not found in guild")
+            return
+        
+        if required_role not in interaction.user.roles:
+            embed = discord.Embed(
+                title="❌ Access Denied",
+                description=f"You need the **{required_role.name}** role to request group access!",
+                color=discord.Color.red(),
+                timestamp=discord.utils.utcnow()
+            )
+            embed.add_field(
+                name="Required Role",
+                value=required_role.mention,
+                inline=False
+            )
+            embed.set_footer(text="Contact a server admin to get the required role")
+            
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            print(f"❌ {interaction.user} denied - missing role {required_role.name}")
+            return
     
     # Try to accept the join request
     success, message, user_id = await accept_group_join_request(username)
@@ -823,6 +854,7 @@ if TOKEN:
     bot.run(TOKEN)
 else:
     print("❌ ERROR: DISCORD_TOKEN not found in environment variables!")
+
 
 
 
