@@ -209,7 +209,7 @@ async def requestaccess(interaction: discord.Interaction, roblox_username: str):
                 value=required_role.mention,
                 inline=False
             )
-            embed.set_footer(text="Contact a server admin to get the required role")
+            embed.set_footer(text="Verify first to get the required role")
             
             await interaction.followup.send(embed=embed, ephemeral=True)
             print(f"❌ {interaction.user} denied - missing role {required_role.name}")
@@ -854,6 +854,7 @@ if TOKEN:
     bot.run(TOKEN)
 else:
     print("❌ ERROR: DISCORD_TOKEN not found in environment variables!")
+
 
 
 
