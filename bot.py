@@ -19,7 +19,7 @@ GAME_IDS = [
     # Add more Place IDs here
 ]
 
-ROBLOX_GROUP_ID = 123456
+ROBLOX_GROUP_ID = 34590562
 ROBLOX_COOKIE = os.getenv('ROBLOX_COOKIE')
 
 # Cache to store Place ID -> Universe ID mappings
@@ -823,6 +823,7 @@ if TOKEN:
     bot.run(TOKEN)
 else:
     print("❌ ERROR: DISCORD_TOKEN not found in environment variables!")
+
 
 
 
