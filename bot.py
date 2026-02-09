@@ -44,6 +44,98 @@ async def get_universe_id_from_place(session, place_id):
     
     return None
 
+@bot.tree.command(name="requestaccess", description="Request access to the Roblox group")
+@app_commands.describe(roblox_username="Your exact Roblox username")
+async def requestaccess(interaction: discord.Interaction, roblox_username: str):
+    await interaction.response.defer(ephemeral=True)
+    
+    username = roblox_username.strip()
+    
+    print(f"📝 Join request from {interaction.user}: {username}")
+    
+    # Try to accept the join request
+    success, message, user_id = await accept_group_join_request(username)
+    
+    if success:
+        # Success embed for the interaction response
+        embed = discord.Embed(
+            title="✅ Request Accepted!",
+            description=f"Successfully accepted **{username}** into the Roblox group!",
+            color=discord.Color.green(),
+            timestamp=discord.utils.utcnow()
+        )
+        embed.add_field(name="Roblox Username", value=username, inline=True)
+        embed.add_field(name="User ID", value=str(user_id), inline=True)
+        embed.add_field(name="Discord User", value=interaction.user.mention, inline=False)
+        
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        print(f"✅ Accepted {username} into group")
+        
+        # Send success DM to the user
+        try:
+            dm_embed = discord.Embed(
+                title="✅ Join Request Accepted!",
+                description=f"Your request to join the Roblox group has been successfully accepted!",
+                color=discord.Color.green(),
+                timestamp=discord.utils.utcnow()
+            )
+            dm_embed.add_field(name="Roblox Username", value=username, inline=True)
+            dm_embed.add_field(name="Group ID", value=f"`{ROBLOX_GROUP_ID}`", inline=True)
+            dm_embed.add_field(
+                name="🎮 View Group", 
+                value=f"[Click Here](https://www.roblox.com/groups/{ROBLOX_GROUP_ID})",
+                inline=False
+            )
+            dm_embed.set_footer(text="Welcome to the group!")
+            
+            await interaction.user.send(embed=dm_embed)
+            print(f"📨 Sent success DM to {interaction.user}")
+        except discord.Forbidden:
+            print(f"⚠️ Could not send DM to {interaction.user} (DMs disabled)")
+        except Exception as e:
+            print(f"❌ Error sending DM: {e}")
+            
+    else:
+        # Failure embed for the interaction response
+        embed = discord.Embed(
+            title="❌ Request Not Found",
+            description=message,
+            color=discord.Color.red(),
+            timestamp=discord.utils.utcnow()
+        )
+        embed.add_field(name="Roblox Username", value=username, inline=True)
+        embed.add_field(name="What to do", value="Make sure you've sent a join request to the group first!", inline=False)
+        
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        print(f"❌ Failed to accept {username}: {message}")
+        
+        # Send failure DM to the user
+        try:
+            dm_embed = discord.Embed(
+                title="❌ Join Request Not Found",
+                description="Couldn't find any requests with that username. Did you send the request?",
+                color=discord.Color.orange(),
+                timestamp=discord.utils.utcnow()
+            )
+            dm_embed.add_field(name="Roblox Username", value=username, inline=True)
+            dm_embed.add_field(
+                name="📝 Steps to Join",
+                value=(
+                    f"1. Go to the [Roblox Group](https://www.roblox.com/groups/{ROBLOX_GROUP_ID})\n"
+                    "2. Click the **'Join Group'** button\n"
+                    "3. Wait a moment, then use `/requestaccess` again with your username"
+                ),
+                inline=False
+            )
+            dm_embed.set_footer(text="Make sure to request on Roblox first!")
+            
+            await interaction.user.send(embed=dm_embed)
+            print(f"📨 Sent failure DM to {interaction.user}")
+        except discord.Forbidden:
+            print(f"⚠️ Could not send DM to {interaction.user} (DMs disabled)")
+        except Exception as e:
+            print(f"❌ Error sending DM: {e}")
+
 @bot.tree.command(name="checkmember", description="Check if a user is in a specific server")
 @app_commands.describe(
     user_id="The Discord user ID to check",
@@ -600,4 +692,5 @@ if TOKEN:
     bot.run(TOKEN)
 else:
     print("❌ ERROR: DISCORD_TOKEN not found in environment variables!")
+
 
