@@ -2,6 +2,8 @@ import discord
 import aiohttp
 import asyncio
 import os
+from discord import ui
+import re
 from discord.ext import commands, tasks
 from discord import app_commands
 
@@ -16,6 +18,9 @@ GAME_IDS = [
     18687417158,  # You can use Place IDs directly from URLs!
     # Add more Place IDs here
 ]
+
+ROBLOX_GROUP_ID = 123456
+ROBLOX_COOKIE = os.getenv('ROBLOX_COOKIE')
 
 # Cache to store Place ID -> Universe ID mappings
 place_to_universe_cache = {}
@@ -44,6 +49,132 @@ async def get_universe_id_from_place(session, place_id):
     
     return None
 
+# Function to get Roblox user ID from username
+async def get_roblox_user_id(session, username):
+    """Get Roblox user ID from username"""
+    try:
+        url = "https://users.roblox.com/v1/usernames/users"
+        payload = {
+            "usernames": [username],
+            "excludeBannedUsers": False
+        }
+        
+        async with session.post(url, json=payload) as response:
+            if response.status == 200:
+                data = await response.json()
+                if data.get('data') and len(data['data']) > 0:
+                    return data['data'][0].get('id')
+    except Exception as e:
+        print(f"Error getting user ID for {username}: {e}")
+    
+    return None
+
+# Function to get group join requests
+async def get_group_join_requests(session):
+    """Get all pending join requests for the group"""
+    try:
+        url = f"https://groups.roblox.com/v1/groups/{ROBLOX_GROUP_ID}/join-requests"
+        headers = {
+            'Cookie': f'.ROBLOSECURITY={ROBLOX_COOKIE}'
+        }
+        
+        async with session.get(url, headers=headers) as response:
+            if response.status == 200:
+                data = await response.json()
+                return data.get('data', [])
+            else:
+                print(f"Failed to get join requests: {response.status}")
+                text = await response.text()
+                print(f"Response: {text}")
+    except Exception as e:
+        print(f"Error getting join requests: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    return []
+
+# Function to accept a specific join request
+async def accept_join_request_by_id(session, user_id):
+    """Accept a join request by user ID"""
+    try:
+        # First, get CSRF token
+        csrf_token = None
+        headers = {
+            'Cookie': f'.ROBLOSECURITY={ROBLOX_COOKIE}'
+        }
+        
+        async with session.post(f"https://groups.roblox.com/v1/groups/{ROBLOX_GROUP_ID}/join-requests/users/{user_id}", headers=headers) as response:
+            csrf_token = response.headers.get('x-csrf-token')
+        
+        if not csrf_token:
+            return False, "Failed to get CSRF token"
+        
+        # Now accept with CSRF token
+        headers['x-csrf-token'] = csrf_token
+        
+        async with session.post(f"https://groups.roblox.com/v1/groups/{ROBLOX_GROUP_ID}/join-requests/users/{user_id}", headers=headers) as response:
+            if response.status == 200:
+                return True, "Successfully accepted"
+            else:
+                text = await response.text()
+                print(f"Failed to accept request: {response.status} - {text}")
+                return False, f"API Error: {response.status}"
+                
+    except Exception as e:
+        print(f"Error accepting join request: {e}")
+        import traceback
+        traceback.print_exc()
+        return False, f"Error: {str(e)}"
+
+# Main function to accept group join request
+async def accept_group_join_request(username):
+    """
+    Try to accept a group join request for the given username.
+    Returns: (success: bool, message: str, user_id: int or None)
+    """
+    if not ROBLOX_COOKIE:
+        return False, "❌ Roblox cookie not configured!", None
+    
+    async with aiohttp.ClientSession() as session:
+        # Step 1: Get user ID from username
+        print(f"🔍 Looking up user ID for: {username}")
+        user_id = await get_roblox_user_id(session, username)
+        
+        if not user_id:
+            return False, f"❌ Could not find Roblox user: {username}", None
+        
+        print(f"✅ Found user ID: {user_id}")
+        
+        # Step 2: Get all join requests
+        print(f"📋 Fetching join requests for group {ROBLOX_GROUP_ID}...")
+        join_requests = await get_group_join_requests(session)
+        
+        if not join_requests:
+            return False, "❌ No pending join requests found or failed to fetch requests", user_id
+        
+        print(f"📊 Found {len(join_requests)} pending request(s)")
+        
+        # Step 3: Check if this user has a pending request
+        request_found = False
+        for request in join_requests:
+            if request.get('requester', {}).get('userId') == user_id:
+                request_found = True
+                print(f"✅ Found join request for {username} (ID: {user_id})")
+                break
+        
+        if not request_found:
+            return False, f"❌ No pending join request found for {username}. Make sure you've requested to join the group first!", user_id
+        
+        # Step 4: Accept the request
+        print(f"⏳ Accepting join request for {username}...")
+        success, message = await accept_join_request_by_id(session, user_id)
+        
+        if success:
+            return True, f"✅ Successfully accepted {username} into the group!", user_id
+        else:
+            return False, f"❌ Failed to accept request: {message}", user_id
+
+# NOW add the /requestaccess command here
 @bot.tree.command(name="requestaccess", description="Request access to the Roblox group")
 @app_commands.describe(roblox_username="Your exact Roblox username")
 async def requestaccess(interaction: discord.Interaction, roblox_username: str):
@@ -692,5 +823,6 @@ if TOKEN:
     bot.run(TOKEN)
 else:
     print("❌ ERROR: DISCORD_TOKEN not found in environment variables!")
+
 
 
