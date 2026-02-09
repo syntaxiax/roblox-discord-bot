@@ -70,6 +70,87 @@ async def get_roblox_user_id(session, username):
     
     return None
 
+# Function to get CSRF token
+async def get_csrf_token(session):
+    """Get CSRF token from Roblox"""
+    try:
+        headers = {
+            'Cookie': f'.ROBLOSECURITY={ROBLOX_COOKIE}'
+        }
+        
+        # Make a POST request to any endpoint to get CSRF token
+        async with session.post(
+            f"https://groups.roblox.com/v1/groups/{ROBLOX_GROUP_ID}/users",
+            headers=headers
+        ) as response:
+            return response.headers.get('x-csrf-token')
+    except Exception as e:
+        print(f"Error getting CSRF token: {e}")
+    
+    return None
+
+# Function to get all members of a specific role
+async def get_role_members(session, role_id, cursor=None):
+    """Get members of a specific role in the group"""
+    try:
+        url = f"https://groups.roblox.com/v1/groups/{ROBLOX_GROUP_ID}/roles/{role_id}/users"
+        params = {}
+        if cursor:
+            params['cursor'] = cursor
+        
+        headers = {
+            'Cookie': f'.ROBLOSECURITY={ROBLOX_COOKIE}'
+        }
+        
+        async with session.get(url, headers=headers, params=params) as response:
+            if response.status == 200:
+                return await response.json()
+            else:
+                print(f"Failed to get role members: {response.status}")
+                return None
+    except Exception as e:
+        print(f"Error getting role members: {e}")
+        return None
+
+# Function to get all group roles
+async def get_group_roles(session):
+    """Get all roles in the group"""
+    try:
+        url = f"https://groups.roblox.com/v1/groups/{ROBLOX_GROUP_ID}/roles"
+        headers = {
+            'Cookie': f'.ROBLOSECURITY={ROBLOX_COOKIE}'
+        }
+        
+        async with session.get(url, headers=headers) as response:
+            if response.status == 200:
+                data = await response.json()
+                return data.get('roles', [])
+            else:
+                print(f"Failed to get group roles: {response.status}")
+                return []
+    except Exception as e:
+        print(f"Error getting group roles: {e}")
+        return []
+
+# Function to kick a user from the group
+async def kick_user_from_group(session, user_id, csrf_token):
+    """Kick a specific user from the group"""
+    try:
+        url = f"https://groups.roblox.com/v1/groups/{ROBLOX_GROUP_ID}/users/{user_id}"
+        headers = {
+            'Cookie': f'.ROBLOSECURITY={ROBLOX_COOKIE}',
+            'x-csrf-token': csrf_token
+        }
+        
+        async with session.delete(url, headers=headers) as response:
+            if response.status == 200:
+                return True, "Success"
+            else:
+                text = await response.text()
+                return False, f"Status {response.status}: {text}"
+    except Exception as e:
+        return False, f"Error: {str(e)}"
+
 # Function to get group join requests
 async def get_group_join_requests(session):
     """Get all pending join requests for the group"""
@@ -175,7 +256,194 @@ async def accept_group_join_request(username):
         else:
             return False, f"❌ Failed to accept request: {message}", user_id
 
-# NOW add the /requestaccess command here
+# NEW COMMAND: Kick all members of a role
+@bot.tree.command(name="kickrole", description="Remove all members from a specific group role (Admin only)")
+@app_commands.describe(role_name="The exact name of the role (e.g., 'Member', 'VIP')")
+@app_commands.checks.has_permissions(administrator=True)
+async def kickrole(interaction: discord.Interaction, role_name: str):
+    """Remove all members from a specific Roblox group role"""
+    
+    if not ROBLOX_COOKIE:
+        await interaction.response.send_message(
+            "❌ Roblox cookie not configured!",
+            ephemeral=True
+        )
+        return
+    
+    await interaction.response.defer(ephemeral=True)
+    
+    print(f"🗑️ /kickrole called by {interaction.user} - Role: {role_name}")
+    
+    async with aiohttp.ClientSession() as session:
+        # Step 1: Get all group roles
+        print(f"📋 Fetching group roles...")
+        roles = await get_group_roles(session)
+        
+        if not roles:
+            await interaction.followup.send(
+                "❌ Failed to fetch group roles!",
+                ephemeral=True
+            )
+            return
+        
+        # Step 2: Find the role by name
+        target_role = None
+        for role in roles:
+            if role.get('name', '').lower() == role_name.lower():
+                target_role = role
+                break
+        
+        if not target_role:
+            # Show available roles
+            available_roles = "\n".join([f"• {role.get('name')} (ID: {role.get('id')})" for role in roles])
+            await interaction.followup.send(
+                f"❌ Role `{role_name}` not found!\n\n**Available roles:**\n{available_roles}",
+                ephemeral=True
+            )
+            return
+        
+        role_id = target_role.get('id')
+        print(f"✅ Found role: {target_role.get('name')} (ID: {role_id})")
+        
+        # Step 3: Get CSRF token
+        print(f"🔑 Getting CSRF token...")
+        csrf_token = await get_csrf_token(session)
+        
+        if not csrf_token:
+            await interaction.followup.send(
+                "❌ Failed to get CSRF token!",
+                ephemeral=True
+            )
+            return
+        
+        # Step 4: Get all members of this role (with pagination)
+        print(f"👥 Fetching members of role {role_name}...")
+        all_members = []
+        cursor = None
+        
+        while True:
+            result = await get_role_members(session, role_id, cursor)
+            
+            if not result:
+                break
+            
+            members = result.get('data', [])
+            all_members.extend(members)
+            
+            cursor = result.get('nextPageCursor')
+            if not cursor:
+                break
+            
+            await asyncio.sleep(0.5)  # Rate limiting
+        
+        if not all_members:
+            await interaction.followup.send(
+                f"ℹ️ No members found in role `{role_name}`!",
+                ephemeral=True
+            )
+            return
+        
+        total_members = len(all_members)
+        print(f"📊 Found {total_members} member(s) in role {role_name}")
+        
+        # Step 5: Send confirmation
+        embed = discord.Embed(
+            title="⚠️ Confirm Bulk Kick",
+            description=f"Are you sure you want to kick **{total_members}** member(s) from the `{role_name}` role?",
+            color=discord.Color.orange()
+        )
+        embed.add_field(name="Group ID", value=f"`{ROBLOX_GROUP_ID}`", inline=True)
+        embed.add_field(name="Role", value=f"`{role_name}`", inline=True)
+        embed.add_field(name="Members to Kick", value=f"`{total_members}`", inline=True)
+        embed.set_footer(text="This action cannot be undone!")
+        
+        await interaction.followup.send(
+            embed=embed,
+            ephemeral=True
+        )
+        
+        # Ask for confirmation
+        confirmation = await interaction.followup.send(
+            "⚠️ Type `CONFIRM` to proceed with kicking all members:",
+            ephemeral=True,
+            wait=True
+        )
+        
+        def check(m):
+            return m.author == interaction.user and m.channel == interaction.channel
+        
+        try:
+            msg = await bot.wait_for('message', timeout=30.0, check=check)
+            
+            if msg.content.upper() != 'CONFIRM':
+                await interaction.followup.send(
+                    "❌ Operation cancelled.",
+                    ephemeral=True
+                )
+                return
+            
+            # Delete the confirmation message
+            try:
+                await msg.delete()
+            except:
+                pass
+            
+        except asyncio.TimeoutError:
+            await interaction.followup.send(
+                "❌ Confirmation timed out. Operation cancelled.",
+                ephemeral=True
+            )
+            return
+        
+        # Step 6: Kick all members
+        kicked = 0
+        failed = 0
+        
+        status_embed = discord.Embed(
+            title="🔄 Kicking Members...",
+            description=f"Progress: 0/{total_members}",
+            color=discord.Color.blue()
+        )
+        status_msg = await interaction.followup.send(embed=status_embed, ephemeral=True)
+        
+        for i, member in enumerate(all_members, 1):
+            user_id = member.get('userId')
+            username = member.get('username', 'Unknown')
+            
+            print(f"[{i}/{total_members}] Kicking {username} (ID: {user_id})...")
+            
+            success, message = await kick_user_from_group(session, user_id, csrf_token)
+            
+            if success:
+                kicked += 1
+                print(f"   ✅ Kicked {username}")
+            else:
+                failed += 1
+                print(f"   ❌ Failed to kick {username}: {message}")
+            
+            # Update status every 5 members
+            if i % 5 == 0 or i == total_members:
+                status_embed.description = f"Progress: {i}/{total_members}\n✅ Kicked: {kicked}\n❌ Failed: {failed}"
+                try:
+                    await status_msg.edit(embed=status_embed)
+                except:
+                    pass
+            
+            await asyncio.sleep(0.5)  # Rate limiting
+        
+        # Final report
+        final_embed = discord.Embed(
+            title="✅ Bulk Kick Complete",
+            color=discord.Color.green() if failed == 0 else discord.Color.orange()
+        )
+        final_embed.add_field(name="Role", value=f"`{role_name}`", inline=True)
+        final_embed.add_field(name="Total Members", value=f"`{total_members}`", inline=True)
+        final_embed.add_field(name="Successfully Kicked", value=f"`{kicked}`", inline=True)
+        final_embed.add_field(name="Failed", value=f"`{failed}`", inline=True)
+        
+        await interaction.followup.send(embed=final_embed, ephemeral=True)
+        print(f"✅ Bulk kick complete: {kicked} kicked, {failed} failed")
+
 @bot.tree.command(name="requestaccess", description="Request access to the Roblox group")
 @app_commands.describe(roblox_username="Your exact Roblox username")
 async def requestaccess(interaction: discord.Interaction, roblox_username: str):
@@ -297,91 +565,6 @@ async def requestaccess(interaction: discord.Interaction, roblox_username: str):
             print(f"⚠️ Could not send DM to {interaction.user} (DMs disabled)")
         except Exception as e:
             print(f"❌ Error sending DM: {e}")
-
-@bot.tree.command(name="checkmember", description="Check if a user is in a specific server")
-@app_commands.describe(
-    user_id="The Discord user ID to check",
-    server_id="The server ID to check (optional, defaults to current server)"
-)
-async def checkmember(interaction: discord.Interaction, user_id: str, server_id: str = None):
-    print(f"🔍 /checkmember called by {interaction.user} - Checking user {user_id}")
-    
-    try:
-        # Convert user_id to int
-        user_id_int = int(user_id)
-        
-        # Use current server if no server_id provided
-        if server_id is None:
-            guild = interaction.guild
-            print(f"   → Checking current server: {guild.name}")
-        else:
-            # Convert server_id to int and fetch the guild
-            server_id_int = int(server_id)
-            guild = bot.get_guild(server_id_int)
-            
-            if guild is None:
-                await interaction.response.send_message(
-                    f"❌ Bot is not in server with ID `{server_id}`",
-                    ephemeral=True
-                )
-                return
-            print(f"   → Checking server: {guild.name}")
-        
-        # Try to fetch the member
-        try:
-            member = await guild.fetch_member(user_id_int)
-            
-            # Create success embed
-            embed = discord.Embed(
-                title="✅ Member Found",
-                color=discord.Color.green(),
-                timestamp=discord.utils.utcnow()
-            )
-            embed.add_field(name="User", value=f"{member.mention} ({member.name})", inline=False)
-            embed.add_field(name="User ID", value=f"`{member.id}`", inline=True)
-            embed.add_field(name="Server", value=f"{guild.name}", inline=True)
-            embed.add_field(name="Server ID", value=f"`{guild.id}`", inline=True)
-            embed.add_field(name="Joined Server", value=discord.utils.format_dt(member.joined_at, 'R'), inline=True)
-            embed.add_field(name="Account Created", value=discord.utils.format_dt(member.created_at, 'R'), inline=True)
-            
-            if member.avatar:
-                embed.set_thumbnail(url=member.avatar.url)
-            
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            print(f"   ✅ User found in {guild.name}")
-            
-        except discord.NotFound:
-            # Member not found in the server
-            embed = discord.Embed(
-                title="❌ Member Not Found",
-                description=f"User `{user_id}` is **not** in **{guild.name}**",
-                color=discord.Color.red(),
-                timestamp=discord.utils.utcnow()
-            )
-            embed.add_field(name="Server Checked", value=f"{guild.name}", inline=True)
-            embed.add_field(name="Server ID", value=f"`{guild.id}`", inline=True)
-            
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            print(f"   ❌ User not found in {guild.name}")
-            
-    except ValueError:
-        await interaction.response.send_message(
-            "❌ Invalid ID format! Please provide valid numeric IDs.",
-            ephemeral=True
-        )
-    except discord.Forbidden:
-        await interaction.response.send_message(
-            "❌ Bot doesn't have permission to fetch members in that server!",
-            ephemeral=True
-        )
-    except Exception as e:
-        print(f"❌ Error in checkmember: {e}")
-        import traceback
-        traceback.print_exc()
-        await interaction.response.send_message(
-            f"❌ An error occurred: {str(e)}",
-            ephemeral=True
-        )
 
 async def check_game_available(session, game_id):
     """
@@ -700,6 +883,7 @@ async def status(interaction: discord.Interaction):
 @forcenext.error
 @addgame.error
 @removegame.error
+@kickrole.error
 async def permission_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.MissingPermissions):
         await interaction.response.send_message("❌ You need Administrator permission to use this command!", ephemeral=True)
@@ -846,7 +1030,7 @@ async def on_ready():
     
     print("\n💡 Use /create in a channel to activate the bot!")
     print("💡 Use /destroy to stop the bot and delete the message")
-    print("💡 Use /addgame with Place IDs from game URLs!\n")
+    print("💡 Use /kickrole to remove all members from a specific role!\n")
 
 # Get token from environment variable
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -854,9 +1038,3 @@ if TOKEN:
     bot.run(TOKEN)
 else:
     print("❌ ERROR: DISCORD_TOKEN not found in environment variables!")
-
-
-
-
-
-
