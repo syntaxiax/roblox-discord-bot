@@ -44,6 +44,91 @@ async def get_universe_id_from_place(session, place_id):
     
     return None
 
+@bot.tree.command(name="checkmember", description="Check if a user is in a specific server")
+@app_commands.describe(
+    user_id="The Discord user ID to check",
+    server_id="The server ID to check (optional, defaults to current server)"
+)
+async def checkmember(interaction: discord.Interaction, user_id: str, server_id: str = None):
+    print(f"🔍 /checkmember called by {interaction.user} - Checking user {user_id}")
+    
+    try:
+        # Convert user_id to int
+        user_id_int = int(user_id)
+        
+        # Use current server if no server_id provided
+        if server_id is None:
+            guild = interaction.guild
+            print(f"   → Checking current server: {guild.name}")
+        else:
+            # Convert server_id to int and fetch the guild
+            server_id_int = int(server_id)
+            guild = bot.get_guild(server_id_int)
+            
+            if guild is None:
+                await interaction.response.send_message(
+                    f"❌ Bot is not in server with ID `{server_id}`",
+                    ephemeral=True
+                )
+                return
+            print(f"   → Checking server: {guild.name}")
+        
+        # Try to fetch the member
+        try:
+            member = await guild.fetch_member(user_id_int)
+            
+            # Create success embed
+            embed = discord.Embed(
+                title="✅ Member Found",
+                color=discord.Color.green(),
+                timestamp=discord.utils.utcnow()
+            )
+            embed.add_field(name="User", value=f"{member.mention} ({member.name})", inline=False)
+            embed.add_field(name="User ID", value=f"`{member.id}`", inline=True)
+            embed.add_field(name="Server", value=f"{guild.name}", inline=True)
+            embed.add_field(name="Server ID", value=f"`{guild.id}`", inline=True)
+            embed.add_field(name="Joined Server", value=discord.utils.format_dt(member.joined_at, 'R'), inline=True)
+            embed.add_field(name="Account Created", value=discord.utils.format_dt(member.created_at, 'R'), inline=True)
+            
+            if member.avatar:
+                embed.set_thumbnail(url=member.avatar.url)
+            
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            print(f"   ✅ User found in {guild.name}")
+            
+        except discord.NotFound:
+            # Member not found in the server
+            embed = discord.Embed(
+                title="❌ Member Not Found",
+                description=f"User `{user_id}` is **not** in **{guild.name}**",
+                color=discord.Color.red(),
+                timestamp=discord.utils.utcnow()
+            )
+            embed.add_field(name="Server Checked", value=f"{guild.name}", inline=True)
+            embed.add_field(name="Server ID", value=f"`{guild.id}`", inline=True)
+            
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            print(f"   ❌ User not found in {guild.name}")
+            
+    except ValueError:
+        await interaction.response.send_message(
+            "❌ Invalid ID format! Please provide valid numeric IDs.",
+            ephemeral=True
+        )
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            "❌ Bot doesn't have permission to fetch members in that server!",
+            ephemeral=True
+        )
+    except Exception as e:
+        print(f"❌ Error in checkmember: {e}")
+        import traceback
+        traceback.print_exc()
+        await interaction.response.send_message(
+            f"❌ An error occurred: {str(e)}",
+            ephemeral=True
+        )
+
 async def check_game_available(session, game_id):
     """
     Comprehensive check if a Roblox game is available and joinable.
@@ -515,3 +600,4 @@ if TOKEN:
     bot.run(TOKEN)
 else:
     print("❌ ERROR: DISCORD_TOKEN not found in environment variables!")
+
