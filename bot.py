@@ -53,6 +53,8 @@ async def start_health_server():
     app = web.Application()
     app.router.add_get('/health', health_check_handler)
     app.router.add_get('/', health_check_handler)
+    app.router.add_head('/health', health_check_handler)
+    app.router.add_head('/', health_check_handler)  
     
     runner = web.AppRunner(app)
     await runner.setup()
@@ -1300,6 +1302,7 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
 
