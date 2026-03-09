@@ -293,8 +293,8 @@ async def collect_member_verification(member):
             def check(m):
                 return m.author == member and isinstance(m.channel, discord.DMChannel)
             
-            try:
-                msg = await bot.wait_for('message', check=check)  # 5 minute timeout
+             try:
+                msg = await bot.wait_for('message', check=check)  # No timeout
                 answer = msg.content.strip()
                 
                 # Validate specific questions
@@ -307,7 +307,6 @@ async def collect_member_verification(member):
                             color=discord.Color.red()
                         )
                         await member.send(embed=error_embed)
-                        # Retry this question
                         i -= 1
                         continue
                     answers[f"question_{i}"] = validated_answer
@@ -321,7 +320,6 @@ async def collect_member_verification(member):
                             color=discord.Color.red()
                         )
                         await member.send(embed=error_embed)
-                        # Retry this question
                         i -= 1
                         continue
                     answers[f"question_{i}"] = validated_answer
@@ -336,6 +334,10 @@ async def collect_member_verification(member):
                     color=discord.Color.green()
                 )
                 await member.send(embed=progress_embed)
+                
+            except Exception as e:
+                print(f"❌ Error waiting for response: {e}")
+                return answers, False
         
         # Success message
         success_embed = discord.Embed(
@@ -1298,6 +1300,7 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
 
