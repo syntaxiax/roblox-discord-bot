@@ -17,7 +17,7 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 # CONFIGURATION - SET THESE VALUES
 # ============================================
 NSFW_VERIFY_CHANNEL_ID = 1480620694051225640             # Set this to your channel ID (e.g., 1234567890)
-NSFW_VERIFY_ROLE_ID = 1259103468753260654                # Set this to your role ID (e.g., 1234567890)
+NSFW_VERIFY_ROLE_ID = 1480625267784290546                # Set this to your role ID (e.g., 1234567890)
 
 ROBLOX_GROUP_ID = 34590562
 REQUIRED_ROLE_ID = 1259103468707250213
@@ -662,7 +662,6 @@ async def nsfw_verify(interaction: discord.Interaction, image: discord.Attachmen
         # Send confirmation to user
         await interaction.followup.send(
             f"✅ Image submitted for verification!\n"
-            f"📤 Sent to <#{NSFW_VERIFY_CHANNEL_ID}>",
             ephemeral=True
         )
         
@@ -748,3 +747,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
