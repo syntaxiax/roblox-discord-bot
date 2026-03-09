@@ -263,7 +263,7 @@ async def collect_member_verification(member):
         # Send intro message
         intro_embed = discord.Embed(
             title="🔐 Server Verification",
-            description="Welcome! Please answer the following questions to verify your membership.",
+            description="Welcome! Please answer the following questions to verify your membership. (If the bot DMs you a few times, we are sorry, it's still in development)",
             color=discord.Color.blue(),
             timestamp=discord.utils.utcnow()
         )
@@ -1298,5 +1298,6 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
