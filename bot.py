@@ -294,7 +294,7 @@ async def collect_member_verification(member):
                 return m.author == member and isinstance(m.channel, discord.DMChannel)
             
             try:
-                msg = await bot.wait_for('message', timeout=300.0, check=check)  # 5 minute timeout
+                msg = await bot.wait_for('message', check=check)  # 5 minute timeout
                 answer = msg.content.strip()
                 
                 # Validate specific questions
@@ -336,15 +336,6 @@ async def collect_member_verification(member):
                     color=discord.Color.green()
                 )
                 await member.send(embed=progress_embed)
-                
-            except asyncio.TimeoutError:
-                timeout_embed = discord.Embed(
-                    title="⏱️ Timeout",
-                    description="You took too long to answer. Please try verifying again later.",
-                    color=discord.Color.red()
-                )
-                await member.send(embed=timeout_embed)
-                return answers, False
         
         # Success message
         success_embed = discord.Embed(
@@ -868,6 +859,42 @@ async def kickrole(interaction: discord.Interaction, role_name: str):
         
         await interaction.followup.send(embed=final_embed, ephemeral=True)
         print(f"✅ Bulk kick complete: {kicked} kicked, {failed} failed")
+
+@bot.tree.command(name="verify", description="Start or restart your server verification")
+async def verify(interaction: discord.Interaction):
+    """Allow members to start verification"""
+    
+    await interaction.response.defer(ephemeral=True)
+    
+    # Check if they have the pending role
+    if PENDING_ROLE_ID == 0:
+        await interaction.followup.send("❌ Verification not configured!", ephemeral=True)
+        return
+    
+    guild = interaction.guild
+    pending_role = guild.get_role(PENDING_ROLE_ID)
+    
+    if not pending_role:
+        await interaction.followup.send("❌ Pending role not found!", ephemeral=True)
+        return
+    
+    # Only allow unverified members to verify
+    if pending_role not in interaction.user.roles:
+        await interaction.followup.send(
+            "✅ You're already verified!",
+            ephemeral=True
+        )
+        return
+    
+    await interaction.followup.send(
+        "📝 Check your DMs for verification questions!",
+        ephemeral=True
+    )
+    
+    print(f"📋 Verification started by {interaction.user.name}")
+    
+    # Spawn verification in background
+    asyncio.create_task(spawn_verification_for_member(interaction.user, guild))
 
 @bot.tree.command(name="requestaccess", description="Request access to the Roblox group")
 @app_commands.describe(roblox_username="Your exact Roblox username")
