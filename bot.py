@@ -19,6 +19,11 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 NSFW_VERIFY_CHANNEL_ID = 1480620694051225640             # Set this to your channel ID (e.g., 1234567890)
 NSFW_VERIFY_ROLE_ID = 1480625267784290546                # Set this to your role ID (e.g., 1234567890)
 
+# Member Verification Settings
+MEMBER_VERIFY_CHANNEL_ID = 1480637006798131330           # Channel where verification submissions are sent
+PENDING_ROLE_ID = 1259103468707250207                    # Role given to new members (to be removed on verify)
+VERIFIED_ROLE_ID = 1259103468707250213                   # Role given after verification (to be added)
+
 ROBLOX_GROUP_ID = 34590562
 REQUIRED_ROLE_ID = 1259103468707250213
 ROBLOX_COOKIE = os.getenv('ROBLOX_COOKIE')
@@ -216,8 +221,141 @@ async def accept_join_request_by_id(session, user_id):
         traceback.print_exc()
         return False, f"Error: {str(e)}"
 
-# Main function to accept group join request
-async def accept_group_join_request(username):
+# Member Verification Questions
+VERIFY_QUESTIONS = [
+    "How old are you?",
+    "Are you in any nomgames or vore community's? Provide us with their name if you do.",
+    "When and how did you discover a vore fetish or like this fetish?",
+    "How did you find us? We would like to know.",
+    "If you have any friends to prove you're not a Vhunter, please state their name. Unless you don't have any.",
+    "Do you have any vore artist you know? Provide a link to their profile, underrated or less popular artist are fine eitherway.",
+    "Send us your roblox profile link.",
+    "Any vore youtuber you know?"
+]
+
+def is_valid_age(answer):
+    """Validate age answer - must be a number"""
+    try:
+        age = int(answer)
+        return True, answer
+    except ValueError:
+        return False, None
+
+def is_valid_link(answer):
+    """Validate that answer contains a link"""
+    return ("http://" in answer.lower() or "https://" in answer.lower()), answer
+
+async def collect_member_verification(member):
+    """
+    Collect verification answers from a member via DMs
+    Returns: (answers_dict, success: bool)
+    """
+    try:
+        # Send intro message
+        intro_embed = discord.Embed(
+            title="🔐 Server Verification",
+            description="Welcome! Please answer the following questions to verify your membership.",
+            color=discord.Color.blue(),
+            timestamp=discord.utils.utcnow()
+        )
+        intro_embed.add_field(
+            name="Instructions",
+            value="Answer each question in order. Some questions require links.",
+            inline=False
+        )
+        
+        await member.send(embed=intro_embed)
+        
+        answers = {}
+        
+        for i, question in enumerate(VERIFY_QUESTIONS, 1):
+            # Send question
+            question_embed = discord.Embed(
+                title=f"Question {i}/{len(VERIFY_QUESTIONS)}",
+                description=question,
+                color=discord.Color.blue(),
+                timestamp=discord.utils.utcnow()
+            )
+            question_embed.set_footer(text="Reply in the chat to answer")
+            
+            await member.send(embed=question_embed)
+            
+            # Wait for answer
+            def check(m):
+                return m.author == member and isinstance(m.channel, discord.DMChannel)
+            
+            try:
+                msg = await bot.wait_for('message', timeout=300.0, check=check)  # 5 minute timeout
+                answer = msg.content.strip()
+                
+                # Validate specific questions
+                if i == 1:  # Age question
+                    valid, validated_answer = is_valid_age(answer)
+                    if not valid:
+                        error_embed = discord.Embed(
+                            title="❌ Invalid Answer",
+                            description="Please provide a valid number for your age.",
+                            color=discord.Color.red()
+                        )
+                        await member.send(embed=error_embed)
+                        # Retry this question
+                        i -= 1
+                        continue
+                    answers[f"question_{i}"] = validated_answer
+                
+                elif i in [6, 7, 8]:  # Questions requiring links
+                    valid, validated_answer = is_valid_link(answer)
+                    if not valid:
+                        error_embed = discord.Embed(
+                            title="❌ Invalid Answer",
+                            description="This question requires a link (must contain http:// or https://)",
+                            color=discord.Color.red()
+                        )
+                        await member.send(embed=error_embed)
+                        # Retry this question
+                        i -= 1
+                        continue
+                    answers[f"question_{i}"] = validated_answer
+                
+                else:
+                    answers[f"question_{i}"] = answer
+                
+                # Show progress
+                progress_embed = discord.Embed(
+                    title="✅ Answer Recorded",
+                    description=f"Progress: {i}/{len(VERIFY_QUESTIONS)}",
+                    color=discord.Color.green()
+                )
+                await member.send(embed=progress_embed)
+                
+            except asyncio.TimeoutError:
+                timeout_embed = discord.Embed(
+                    title="⏱️ Timeout",
+                    description="You took too long to answer. Please try verifying again later.",
+                    color=discord.Color.red()
+                )
+                await member.send(embed=timeout_embed)
+                return answers, False
+        
+        # Success message
+        success_embed = discord.Embed(
+            title="✅ Verification Complete",
+            description="Your answers have been submitted for review. The staff will review your responses and notify you of the decision.",
+            color=discord.Color.green(),
+            timestamp=discord.utils.utcnow()
+        )
+        await member.send(embed=success_embed)
+        
+        return answers, True
+        
+    except discord.Forbidden:
+        print(f"❌ Cannot send DM to {member} - DMs closed")
+        return {}, False
+    except Exception as e:
+        print(f"❌ Error collecting verification from {member}: {e}")
+        import traceback
+        traceback.print_exc()
+        return {}, False
     """
     Try to accept a group join request for the given username.
     Returns: (success: bool, message: str, user_id: int or None)
@@ -263,6 +401,159 @@ async def accept_group_join_request(username):
             return True, f"✅ Successfully accepted {username} into the group!", user_id
         else:
             return False, f"❌ Failed to accept request: {message}", user_id
+
+# ============================================
+# VERIFICATION BUTTONS VIEW
+# ============================================
+
+class VerificationView(discord.ui.View):
+    def __init__(self, member, answers):
+        super().__init__(timeout=None)
+        self.member = member
+        self.answers = answers
+        self.verified = None
+    
+    @discord.ui.button(label="✅ Accept", style=discord.ButtonStyle.green)
+    async def accept_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Accept member verification"""
+        
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "❌ Only administrators can approve verifications!",
+                ephemeral=True
+            )
+            return
+        
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            guild = interaction.guild
+            member = guild.get_member(self.member.id)
+            
+            if not member:
+                await interaction.followup.send(
+                    "❌ Member not found in guild!",
+                    ephemeral=True
+                )
+                return
+            
+            # Get roles
+            pending_role = guild.get_role(PENDING_ROLE_ID)
+            verified_role = guild.get_role(VERIFIED_ROLE_ID)
+            
+            if not pending_role or not verified_role:
+                await interaction.followup.send(
+                    "❌ Configuration error: Roles not found!",
+                    ephemeral=True
+                )
+                print(f"❌ Pending role or verified role not found")
+                return
+            
+            # Remove pending role, add verified role
+            if pending_role in member.roles:
+                await member.remove_roles(pending_role)
+            await member.add_roles(verified_role)
+            
+            # Send member success message
+            verify_embed = discord.Embed(
+                title="✅ You have been verified!",
+                description="Congratulations! Your verification has been approved. Welcome to the community!",
+                color=discord.Color.green(),
+                timestamp=discord.utils.utcnow()
+            )
+            
+            try:
+                await member.send(embed=verify_embed)
+            except discord.Forbidden:
+                print(f"⚠️ Could not send DM to {member} (DMs disabled)")
+            
+            # Update the embed to show it was accepted
+            original_embed = interaction.message.embeds[0]
+            original_embed.color = discord.Color.green()
+            original_embed.title = "✅ ACCEPTED"
+            original_embed.description = f"Approved by {interaction.user.mention}"
+            
+            await interaction.message.edit(embed=original_embed, view=None)
+            
+            await interaction.followup.send(
+                f"✅ {member.mention} has been verified!",
+                ephemeral=True
+            )
+            
+            print(f"✅ {member.name} approved by {interaction.user.name}")
+            
+        except Exception as e:
+            await interaction.followup.send(
+                f"❌ Error approving verification: {str(e)}",
+                ephemeral=True
+            )
+            print(f"❌ Error in accept button: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    @discord.ui.button(label="❌ Deny", style=discord.ButtonStyle.red)
+    async def deny_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Deny member verification"""
+        
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "❌ Only administrators can deny verifications!",
+                ephemeral=True
+            )
+            return
+        
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            guild = interaction.guild
+            member = guild.get_member(self.member.id)
+            
+            if not member:
+                await interaction.followup.send(
+                    "❌ Member not found in guild!",
+                    ephemeral=True
+                )
+                return
+            
+            # Send rejection message to member
+            reject_embed = discord.Embed(
+                title="❌ Verification Failed",
+                description="Your verification has been denied. You may try again next time.",
+                color=discord.Color.red(),
+                timestamp=discord.utils.utcnow()
+            )
+            
+            try:
+                await member.send(embed=reject_embed)
+            except discord.Forbidden:
+                print(f"⚠️ Could not send DM to {member} (DMs disabled)")
+            
+            # Kick the member
+            await member.kick(reason="Verification denied")
+            
+            # Update the embed to show it was denied
+            original_embed = interaction.message.embeds[0]
+            original_embed.color = discord.Color.red()
+            original_embed.title = "❌ DENIED"
+            original_embed.description = f"Denied by {interaction.user.mention}"
+            
+            await interaction.message.edit(embed=original_embed, view=None)
+            
+            await interaction.followup.send(
+                f"❌ {member.mention} has been kicked due to failed verification!",
+                ephemeral=True
+            )
+            
+            print(f"❌ {member.name} rejected and kicked by {interaction.user.name}")
+            
+        except Exception as e:
+            await interaction.followup.send(
+                f"❌ Error denying verification: {str(e)}",
+                ephemeral=True
+            )
+            print(f"❌ Error in deny button: {e}")
+            import traceback
+            traceback.print_exc()
 
 # ============================================
 # SLASH COMMANDS
@@ -661,7 +952,8 @@ async def nsfw_verify(interaction: discord.Interaction, image: discord.Attachmen
         
         # Send confirmation to user
         await interaction.followup.send(
-            f"✅ Image submitted for verification!\n",
+            f"✅ Image submitted for verification!\n"
+            f"📤 Sent to <#{NSFW_VERIFY_CHANNEL_ID}>",
             ephemeral=True
         )
         
@@ -693,6 +985,109 @@ async def permission_error(interaction: discord.Interaction, error: app_commands
 # BOT EVENTS
 # ============================================
 
+# ============================================
+# BOT EVENTS
+# ============================================
+
+@bot.event
+async def on_member_join(member):
+    """Handle new member joins - send verification questionnaire"""
+    
+    print(f"\n👤 New member joined: {member.name} ({member.id})")
+    
+    if MEMBER_VERIFY_CHANNEL_ID == 0:
+        print(f"⚠️ MEMBER_VERIFY_CHANNEL_ID not configured, skipping verification")
+        return
+    
+    if PENDING_ROLE_ID == 0:
+        print(f"⚠️ PENDING_ROLE_ID not configured, skipping verification")
+        return
+    
+    if VERIFIED_ROLE_ID == 0:
+        print(f"⚠️ VERIFIED_ROLE_ID not configured, skipping verification")
+        return
+    
+    try:
+        # Give member the pending role
+        guild = member.guild
+        pending_role = guild.get_role(PENDING_ROLE_ID)
+        
+        if not pending_role:
+            print(f"❌ Pending role {PENDING_ROLE_ID} not found!")
+            return
+        
+        await member.add_roles(pending_role)
+        print(f"✅ Added pending role to {member.name}")
+        
+        # Send welcome message and start verification
+        welcome_embed = discord.Embed(
+            title="👋 Welcome!",
+            description="Thank you for joining our server! We need you to complete a verification process to join our community.",
+            color=discord.Color.blue(),
+            timestamp=discord.utils.utcnow()
+        )
+        welcome_embed.add_field(
+            name="What's Next?",
+            value="Check your DMs for verification questions. You have 5 minutes to answer each question.",
+            inline=False
+        )
+        
+        try:
+            await member.send(embed=welcome_embed)
+        except discord.Forbidden:
+            print(f"❌ Cannot send DM to {member} - DMs closed")
+            return
+        
+        # Collect verification answers
+        print(f"📋 Starting verification for {member.name}...")
+        answers, success = await collect_member_verification(member)
+        
+        if not success:
+            print(f"❌ Verification failed for {member.name}")
+            return
+        
+        # Get the verification channel
+        verify_channel = bot.get_channel(MEMBER_VERIFY_CHANNEL_ID)
+        
+        if not verify_channel:
+            print(f"❌ Verification channel {MEMBER_VERIFY_CHANNEL_ID} not found!")
+            return
+        
+        # Create embed with all answers
+        embed = discord.Embed(
+            title=f"📋 New Member Verification",
+            description=f"**Member:** {member.mention}\n**Username:** {member.name}\n**ID:** {member.id}",
+            color=discord.Color.blue(),
+            timestamp=discord.utils.utcnow()
+        )
+        
+        # Add each answer
+        for i, question in enumerate(VERIFY_QUESTIONS, 1):
+            answer = answers.get(f"question_{i}", "No answer provided")
+            
+            # Truncate long answers for embed field
+            if len(answer) > 1024:
+                answer = answer[:1021] + "..."
+            
+            embed.add_field(
+                name=f"Q{i}: {question}",
+                value=answer,
+                inline=False
+            )
+        
+        embed.set_footer(text="Use the buttons below to accept or deny this verification")
+        
+        # Send to verification channel with buttons
+        view = VerificationView(member, answers)
+        msg = await verify_channel.send(embed=embed, view=view)
+        
+        print(f"✅ Verification submitted for {member.name} - Message ID: {msg.id}")
+        
+    except Exception as e:
+        print(f"❌ Error in member join handler: {e}")
+        import traceback
+        traceback.print_exc()
+
 @bot.event
 async def on_ready():
     global bot_ready
@@ -718,11 +1113,16 @@ async def on_ready():
     print("\n📋 Configuration:")
     print(f"   NSFW Verification Channel: {NSFW_VERIFY_CHANNEL_ID}")
     print(f"   NSFW Verification Role: {NSFW_VERIFY_ROLE_ID}")
+    print(f"   Member Verification Channel: {MEMBER_VERIFY_CHANNEL_ID}")
+    print(f"   Pending Role: {PENDING_ROLE_ID}")
+    print(f"   Verified Role: {VERIFIED_ROLE_ID}")
     print(f"   Roblox Group ID: {ROBLOX_GROUP_ID}")
     print("\n💡 Available Commands:")
     print("   - /nsfw-verify: Submit image for verification")
     print("   - /requestaccess: Request to join Roblox group")
-    print("   - /kickrole: Bulk kick members from a role\n")
+    print("   - /kickrole: Bulk kick members from a role")
+    print("\n📝 Events:")
+    print("   - Member Join: Automatic verification questionnaire")
 
 async def main():
     """Start both the Discord bot and health check server"""
@@ -747,5 +1147,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
