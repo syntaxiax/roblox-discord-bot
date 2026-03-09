@@ -242,8 +242,16 @@ def is_valid_age(answer):
         return False, None
 
 def is_valid_link(answer):
-    """Validate that answer contains a link"""
-    return ("http://" in answer.lower() or "https://" in answer.lower()), answer
+    """Validate that answer contains a link or is a valid 'none' response"""
+    answer_lower = answer.lower()
+    
+    # Accept "none" type responses
+    skip_words = ["none", "don't have", "dont have", "don't know", "dont know", "idk", "nope", "nah", "no"]
+    if any(word in answer_lower for word in skip_words):
+        return True, answer
+    
+    # Otherwise require a link
+    return ("http://" in answer_lower or "https://" in answer_lower), answer
 
 async def collect_member_verification(member):
     """
@@ -308,7 +316,7 @@ async def collect_member_verification(member):
                     if not valid:
                         error_embed = discord.Embed(
                             title="❌ Invalid Answer",
-                            description="This question requires a link (must contain http:// or https://)",
+                            description="Please provide a link (must contain http:// or https://) or reply with 'none' if you don't have one.",
                             color=discord.Color.red()
                         )
                         await member.send(embed=error_embed)
@@ -1215,4 +1223,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
