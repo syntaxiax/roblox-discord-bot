@@ -16,13 +16,13 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 # ============================================
 # CONFIGURATION - SET THESE VALUES
 # ============================================
-NSFW_VERIFY_CHANNEL_ID = 0             # Set this to your channel ID (e.g., 1234567890)
-NSFW_VERIFY_ROLE_ID = 0                # Set this to your role ID (e.g., 1234567890)
+NSFW_VERIFY_CHANNEL_ID = 1480620694051225640             # Set this to your channel ID (e.g., 1234567890)
+NSFW_VERIFY_ROLE_ID = 1480192134085738496                # Set this to your role ID (e.g., 1234567890)
 
 # Member Verification Settings
-MEMBER_VERIFY_CHANNEL_ID = 0           # Channel where verification submissions are sent
-PENDING_ROLE_ID = 0                    # Role given to new members (to be removed on verify)
-VERIFIED_ROLE_ID = 0                   # Role given after verification (to be added)
+MEMBER_VERIFY_CHANNEL_ID = 1480637006798131330           # Channel where verification submissions are sent
+PENDING_ROLE_ID = 1259103468707250207                    # Role given to new members (to be removed on verify)
+VERIFIED_ROLE_ID = 1259103468707250213                   # Role given after verification (to be added)
 
 ROBLOX_GROUP_ID = 34590562
 REQUIRED_ROLE_ID = 1259103468707250213
@@ -561,6 +561,71 @@ class VerificationView(discord.ui.View):
 # SLASH COMMANDS
 # ============================================
 
+@bot.tree.command(name="verify-all", description="Send verification to all members with pending role (Admin only)")
+@app_commands.checks.has_permissions(administrator=True)
+async def verify_all(interaction: discord.Interaction):
+    """Send verification questionnaire to all members with pending role"""
+    
+    if PENDING_ROLE_ID == 0:
+        await interaction.response.send_message(
+            "❌ PENDING_ROLE_ID not configured!",
+            ephemeral=True
+        )
+        return
+    
+    await interaction.response.defer(ephemeral=True)
+    
+    guild = interaction.guild
+    pending_role = guild.get_role(PENDING_ROLE_ID)
+    
+    if not pending_role:
+        await interaction.followup.send(
+            f"❌ Pending role {PENDING_ROLE_ID} not found!",
+            ephemeral=True
+        )
+        return
+    
+    # Get all members with pending role
+    members_to_verify = [m for m in guild.members if pending_role in m.roles]
+    
+    if not members_to_verify:
+        await interaction.followup.send(
+            "ℹ️ No members with pending role found!",
+            ephemeral=True
+        )
+        return
+    
+    total = len(members_to_verify)
+    
+    print(f"\n🚀 Starting /verify-all for {total} members...")
+    
+    # Spawn verification tasks for all members (non-blocking)
+    for i, member in enumerate(members_to_verify, 1):
+        # Spawn as background task (don't wait for response)
+        asyncio.create_task(start_member_verification_background(member))
+        
+        # Small delay between spawning
+        await asyncio.sleep(0.3)
+        
+        if i % 20 == 0:
+            print(f"📤 Spawned verification for {i}/{total} members...")
+    
+    # Send success message immediately (no waiting)
+    embed = discord.Embed(
+        title="✅ Verification Sent!",
+        description=f"Verification questionnaires have been sent to {total} members!\n\n"
+                    f"⏱️ Each member has 5 minutes per question to respond.\n"
+                    f"📩 Submissions will appear in the verification channel as they complete.",
+        color=discord.Color.green(),
+        timestamp=discord.utils.utcnow()
+    )
+    embed.add_field(name="Total Members", value=f"`{total}`", inline=True)
+    embed.add_field(name="Status", value="🔄 Processing in background", inline=True)
+    embed.set_footer(text="Check console for progress")
+    
+    await interaction.followup.send(embed=embed)
+    print(f"✅ /verify-all spawned {total} background tasks\n")
+
 @bot.tree.command(name="kickrole", description="Remove all members from a specific group role (Admin only)")
 @app_commands.describe(role_name="The exact name of the role (e.g., 'Member', 'VIP')")
 @app_commands.checks.has_permissions(administrator=True)
@@ -979,13 +1044,14 @@ async def nsfw_verify(interaction: discord.Interaction, image: discord.Attachmen
 
 # Error handlers for slash commands
 @kickrole.error
-async def permission_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+async def kickrole_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.MissingPermissions):
         await interaction.response.send_message("❌ You need Administrator permission to use this command!", ephemeral=True)
 
-# ============================================
-# BOT EVENTS
-# ============================================
+@verify_all.error
+async def verify_all_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.MissingPermissions):
+        await interaction.response.send_message("❌ You need Administrator permission to use this command!", ephemeral=True)
 
 # ============================================
 # BOT EVENTS
