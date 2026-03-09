@@ -661,7 +661,7 @@ async def nsfw_verify(interaction: discord.Interaction, image: discord.Attachmen
         
         # Send confirmation to user
         await interaction.followup.send(
-            f"✅ Image submitted for verification!\n"
+            f"✅ Image submitted for verification!\n",
             ephemeral=True
         )
         
@@ -747,4 +747,5 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
