@@ -11,6 +11,7 @@ from aiohttp import web
 # Discord bot setup
 intents = discord.Intents.default()
 intents.message_content = True
+intents.members = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 # ============================================
@@ -1223,3 +1224,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
