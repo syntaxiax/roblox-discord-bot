@@ -146,6 +146,69 @@ async def get_group_roles(session):
         print(f"Error getting group roles: {e}")
         return []
 
+async def start_member_verification_background(member):
+    """Start verification for a member in background (non-blocking)"""
+    try:
+        print(f"📋 Starting verification for {member.name}...")
+        
+        # Send intro message
+        intro_embed = discord.Embed(
+            title="🔐 Server Verification",
+            description="Welcome! Please answer the following questions to verify your membership.",
+            color=discord.Color.blue(),
+            timestamp=discord.utils.utcnow()
+        )
+        intro_embed.add_field(
+            name="Instructions",
+            value="Answer each question in order. Some questions require links.",
+            inline=False
+        )
+        
+        await member.send(embed=intro_embed)
+        
+        # Collect answers (with timeout per member)
+        answers, success = await collect_member_verification(member)
+        
+        if success:
+            # Submit to verification channel
+            verify_channel = bot.get_channel(MEMBER_VERIFY_CHANNEL_ID)
+            
+            if verify_channel:
+                # Create embed with all answers
+                embed = discord.Embed(
+                    title=f"📋 New Member Verification",
+                    description=f"**Member:** {member.mention}\n**Username:** {member.name}\n**ID:** {member.id}",
+                    color=discord.Color.blue(),
+                    timestamp=discord.utils.utcnow()
+                )
+                
+                # Add each answer
+                for i, question in enumerate(VERIFY_QUESTIONS, 1):
+                    answer = answers.get(f"question_{i}", "No answer provided")
+                    
+                    if len(answer) > 1024:
+                        answer = answer[:1021] + "..."
+                    
+                    embed.add_field(
+                        name=f"Q{i}: {question}",
+                        value=answer,
+                        inline=False
+                    )
+                
+                embed.set_footer(text="Use the buttons below to accept or deny this verification")
+                
+                # Send to verification channel with buttons
+                view = VerificationView(member, answers)
+                await verify_channel.send(embed=embed, view=view)
+                print(f"✅ Verification submitted for {member.name}")
+        else:
+            print(f"⏱️ Verification timed out for {member.name}")
+            
+    except discord.Forbidden:
+        print(f"❌ Cannot send DM to {member.name} - DMs closed")
+    except Exception as e:
+        print(f"❌ Error in verification for {member.name}: {e}")
+
 async def verify_all_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.MissingPermissions):
         await interaction.response.send_message("❌ You need Administrator permission to use this command!", ephemeral=True)
@@ -185,100 +248,35 @@ async def verify_all(interaction: discord.Interaction):
         return
     
     total = len(members_to_verify)
-    sent = 0
-    failed = 0
     
-    status_embed = discord.Embed(
-        title="🔄 Sending Verifications...",
-        description=f"Progress: 0/{total}",
-        color=discord.Color.blue()
-    )
-    status_msg = await interaction.followup.send(embed=status_embed)
+    print(f"\n🚀 Starting /verify-all for {total} members...")
     
+    # Spawn verification tasks for all members (non-blocking)
     for i, member in enumerate(members_to_verify, 1):
-        try:
-            # Send intro message
-            intro_embed = discord.Embed(
-                title="🔐 Server Verification",
-                description="Welcome! Please answer the following questions to verify your membership.",
-                color=discord.Color.blue(),
-                timestamp=discord.utils.utcnow()
-            )
-            intro_embed.add_field(
-                name="Instructions",
-                value="Answer each question in order. Some questions require links.",
-                inline=False
-            )
-            
-            await member.send(embed=intro_embed)
-            
-            # Collect verification answers
-            answers, success = await collect_member_verification(member)
-            
-            if success:
-                # Get the verification channel
-                verify_channel = bot.get_channel(MEMBER_VERIFY_CHANNEL_ID)
-                
-                if verify_channel:
-                    # Create embed with all answers
-                    embed = discord.Embed(
-                        title=f"📋 New Member Verification",
-                        description=f"**Member:** {member.mention}\n**Username:** {member.name}\n**ID:** {member.id}",
-                        color=discord.Color.blue(),
-                        timestamp=discord.utils.utcnow()
-                    )
-                    
-                    # Add each answer
-                    for j, question in enumerate(VERIFY_QUESTIONS, 1):
-                        answer = answers.get(f"question_{j}", "No answer provided")
-                        
-                        if len(answer) > 1024:
-                            answer = answer[:1021] + "..."
-                        
-                        embed.add_field(
-                            name=f"Q{j}: {question}",
-                            value=answer,
-                            inline=False
-                        )
-                    
-                    embed.set_footer(text="Use the buttons below to accept or deny this verification")
-                    
-                    # Send to verification channel with buttons
-                    view = VerificationView(member, answers)
-                    await verify_channel.send(embed=embed, view=view)
-                
-                sent += 1
-            else:
-                failed += 1
-            
-        except discord.Forbidden:
-            print(f"⚠️ Cannot send DM to {member} - DMs closed")
-            failed += 1
-        except Exception as e:
-            print(f"❌ Error verifying {member}: {e}")
-            failed += 1
+        # Spawn as background task (don't wait for response)
+        asyncio.create_task(start_member_verification_background(member))
         
-        # Update progress
-        if i % 5 == 0 or i == total:
-            status_embed.description = f"Progress: {i}/{total}\n✅ Sent: {sent}\n❌ Failed: {failed}"
-            try:
-                await status_msg.edit(embed=status_embed)
-            except:
-                pass
+        # Small delay between spawning
+        await asyncio.sleep(0.3)
         
-        await asyncio.sleep(1)  # Rate limiting
+        if i % 20 == 0:
+            print(f"📤 Spawned verification for {i}/{total} members...")
     
-    # Final summary
-    final_embed = discord.Embed(
-        title="✅ Verification Send Complete",
-        color=discord.Color.green() if failed == 0 else discord.Color.orange()
+    # Send success message immediately (no waiting)
+    embed = discord.Embed(
+        title="✅ Verification Sent!",
+        description=f"Verification questionnaires have been sent to {total} members!\n\n"
+                    f"⏱️ Each member has 5 minutes per question to respond.\n"
+                    f"📩 Submissions will appear in the verification channel as they complete.",
+        color=discord.Color.green(),
+        timestamp=discord.utils.utcnow()
     )
-    final_embed.add_field(name="Total Members", value=f"`{total}`", inline=True)
-    final_embed.add_field(name="Successfully Sent", value=f"`{sent}`", inline=True)
-    final_embed.add_field(name="Failed", value=f"`{failed}`", inline=True)
+    embed.add_field(name="Total Members", value=f"`{total}`", inline=True)
+    embed.add_field(name="Status", value="🔄 Processing in background", inline=True)
+    embed.set_footer(text="Check console for progress")
     
-    await interaction.followup.send(embed=final_embed)
-    print(f"✅ Verification send complete: {sent} sent, {failed} failed")
+    await interaction.followup.send(embed=embed)
+    print(f"✅ /verify-all spawned {total} background tasks\n")
 
 # Function to kick a user from the group
 async def kick_user_from_group(session, user_id, csrf_token):
@@ -1282,5 +1280,6 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
