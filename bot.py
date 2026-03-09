@@ -293,7 +293,7 @@ async def collect_member_verification(member):
             def check(m):
                 return m.author == member and isinstance(m.channel, discord.DMChannel)
             
-             try:
+            try:
                 msg = await bot.wait_for('message', check=check)  # No timeout
                 answer = msg.content.strip()
                 
@@ -1300,6 +1300,7 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
 
