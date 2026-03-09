@@ -570,6 +570,53 @@ class VerificationView(discord.ui.View):
 # SLASH COMMANDS
 # ============================================
 
+async def spawn_verification_for_member(member, guild):
+    """Background task to verify a single member"""
+    try:
+        answers, success = await collect_member_verification(member)
+        
+        if not success:
+            print(f"❌ Verification failed for {member.name}")
+            return
+        
+        # Get the verification channel
+        verify_channel = bot.get_channel(MEMBER_VERIFY_CHANNEL_ID)
+        
+        if not verify_channel:
+            return
+        
+        # Create embed with all answers
+        embed = discord.Embed(
+            title=f"📋 New Member Verification",
+            description=f"**Member:** {member.mention}\n**Username:** {member.name}\n**ID:** {member.id}",
+            color=discord.Color.blue(),
+            timestamp=discord.utils.utcnow()
+        )
+        
+        # Add each answer
+        for i, question in enumerate(VERIFY_QUESTIONS, 1):
+            answer = answers.get(f"question_{i}", "No answer provided")
+            
+            if len(answer) > 1024:
+                answer = answer[:1021] + "..."
+            
+            embed.add_field(
+                name=f"Q{i}: {question}",
+                value=answer,
+                inline=False
+            )
+        
+        embed.set_footer(text="Use the buttons below to accept or deny this verification")
+        
+        # Send to verification channel with buttons
+        view = VerificationView(member, answers)
+        await verify_channel.send(embed=embed, view=view)
+        
+        print(f"✅ Verification submitted for {member.name}")
+        
+    except Exception as e:
+        print(f"❌ Error verifying {member.name}: {e}")
+
 @bot.tree.command(name="verify-all", description="Send verification to all members with pending role (Admin only)")
 @app_commands.checks.has_permissions(administrator=True)
 async def verify_all(interaction: discord.Interaction):
@@ -611,8 +658,8 @@ async def verify_all(interaction: discord.Interaction):
     # Spawn verification tasks for all members (non-blocking)
     for i, member in enumerate(members_to_verify, 1):
         # Spawn as background task (don't wait for response)
-        asyncio.create_task(start_member_verification_background(member))
-        
+        asyncio.create_task(spawn_verification_for_member(member, interaction.guild))
+    
         # Small delay between spawning
         await asyncio.sleep(0.3)
         
@@ -1224,4 +1271,5 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
