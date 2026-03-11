@@ -137,7 +137,7 @@ async def get_group_roles(session):
             'Cookie': f'.ROBLOSECURITY={ROBLOX_COOKIE}'
         }
         
-        async with session.get(url, headers=headers) as response:
+        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as response:
             if response.status == 200:
                 data = await response.json()
                 return data.get('roles', [])
@@ -1302,6 +1302,7 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
 
