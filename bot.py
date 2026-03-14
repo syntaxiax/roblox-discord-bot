@@ -25,6 +25,9 @@ MEMBER_VERIFY_CHANNEL_ID = 1480637006798131330           # Channel where verific
 PENDING_ROLE_ID = 1259103468707250207                    # Role given to new members (to be removed on verify)
 VERIFIED_ROLE_ID = 1259103468707250213                   # Role given after verification (to be added)
 
+# Check Settings - NEW
+CHECK_ROLE_ID = 1482499303527419984                      # Custom role for members under check (create this first!)
+
 ROBLOX_GROUP_ID = 34590562
 REQUIRED_ROLE_ID = 1259103468707250213
 ROBLOX_COOKIE = os.getenv('ROBLOX_COOKIE')
@@ -65,6 +68,10 @@ async def start_health_server():
     
     print(f"✅ Health check server running on port {port}")
     return runner
+
+# ============================================
+# ROBLOX API FUNCTIONS
+# ============================================
 
 # Function to get Roblox user ID from username
 async def get_roblox_user_id(session, username):
@@ -260,8 +267,6 @@ async def collect_member_verification(member):
     """
     Collect verification answers from a member via DMs
     Returns: (answers_dict, success: bool)
-    
-    FIXED: Now properly re-asks questions with invalid answers
     """
     try:
         # Send intro message
@@ -280,11 +285,11 @@ async def collect_member_verification(member):
         await member.send(embed=intro_embed)
         
         answers = {}
-        question_index = 0  # Use index instead of for loop variable
+        question_index = 0
         
         while question_index < len(VERIFY_QUESTIONS):
             question = VERIFY_QUESTIONS[question_index]
-            i = question_index + 1  # For display purposes (1-indexed)
+            i = question_index + 1
             
             # Send question
             question_embed = discord.Embed(
@@ -302,11 +307,11 @@ async def collect_member_verification(member):
                 return m.author == member and isinstance(m.channel, discord.DMChannel)
             
             try:
-                msg = await bot.wait_for('message', check=check, timeout=300)  # 5 minute timeout
+                msg = await bot.wait_for('message', check=check, timeout=300)
                 answer = msg.content.strip()
                 
                 # Validate specific questions
-                if i == 1:  # Age question (question_1)
+                if i == 1:  # Age question
                     valid, validated_answer = is_valid_age(answer)
                     if not valid:
                         error_embed = discord.Embed(
@@ -315,11 +320,10 @@ async def collect_member_verification(member):
                             color=discord.Color.red()
                         )
                         await member.send(embed=error_embed)
-                        # DON'T increment question_index, re-ask this question
                         continue
                     answers[f"question_{i}"] = validated_answer
                 
-                elif i in [6, 7, 8]:  # Questions requiring links (question_6, 7, 8)
+                elif i in [6, 7, 8]:  # Questions requiring links
                     valid, validated_answer = is_valid_link(answer)
                     if not valid:
                         error_embed = discord.Embed(
@@ -328,15 +332,13 @@ async def collect_member_verification(member):
                             color=discord.Color.red()
                         )
                         await member.send(embed=error_embed)
-                        # DON'T increment question_index, re-ask this question
                         continue
                     answers[f"question_{i}"] = validated_answer
                 
                 else:
-                    # All other questions are accepted as-is
                     answers[f"question_{i}"] = answer
                 
-                # Show progress (only if answer was valid)
+                # Show progress
                 progress_embed = discord.Embed(
                     title="✅ Answer Recorded",
                     description=f"Progress: {i}/{len(VERIFY_QUESTIONS)}",
@@ -344,11 +346,9 @@ async def collect_member_verification(member):
                 )
                 await member.send(embed=progress_embed)
                 
-                # Move to next question
                 question_index += 1
                 
             except asyncio.TimeoutError:
-                # 5 minute timeout per question
                 timeout_embed = discord.Embed(
                     title="⏱️ Timeout",
                     description="You took too long to answer. Verification cancelled.",
@@ -362,7 +362,7 @@ async def collect_member_verification(member):
                 print(f"❌ Error waiting for response from {member.name}: {e}")
                 return answers, False
         
-        # Success message (only sent after ALL questions answered)
+        # Success message
         success_embed = discord.Embed(
             title="✅ Verification Complete",
             description="Your answers have been submitted for review. The staff will review your responses and notify you of the decision.",
@@ -430,7 +430,7 @@ async def accept_group_join_request(username):
             return False, f"❌ Failed to accept request: {message}", user_id
 
 # ============================================
-# VERIFICATION BUTTONS VIEW - UPDATED WITH USERNAME
+# VERIFICATION BUTTONS VIEW
 # ============================================
 
 class VerificationView(discord.ui.View):
@@ -438,8 +438,8 @@ class VerificationView(discord.ui.View):
         super().__init__(timeout=None)
         self.member = member
         self.member_id = member.id
-        self.member_username = member_username or member.name  # Store username
-        self.member_display_name = member.display_name  # Store display name
+        self.member_username = member_username or member.name
+        self.member_display_name = member.display_name
         self.answers = answers
         self.verified = None
     
@@ -503,7 +503,7 @@ class VerificationView(discord.ui.View):
             except discord.Forbidden:
                 print(f"⚠️ Could not send DM to {member} (DMs disabled)")
             
-            # Update the embed to show it was accepted - KEEP USERNAME
+            # Update the embed to show it was accepted
             original_embed = interaction.message.embeds[0]
             original_embed.color = discord.Color.green()
             original_embed.title = "✅ ACCEPTED"
@@ -512,7 +512,7 @@ class VerificationView(discord.ui.View):
             await interaction.message.edit(embed=original_embed, view=None)
             
             await interaction.followup.send(
-                f"✅ {member.mention} has been verified! (Username: `{self.member_username}`)",
+                f"✅ {member.mention} has been verified!",
                 ephemeral=True
             )
             
@@ -573,7 +573,7 @@ class VerificationView(discord.ui.View):
             # Kick the member
             await member.kick(reason="Verification denied")
             
-            # Update the embed to show it was denied - KEEP USERNAME
+            # Update the embed to show it was denied
             original_embed = interaction.message.embeds[0]
             original_embed.color = discord.Color.red()
             original_embed.title = "❌ DENIED"
@@ -582,7 +582,7 @@ class VerificationView(discord.ui.View):
             await interaction.message.edit(embed=original_embed, view=None)
             
             await interaction.followup.send(
-                f"❌ {member.mention} has been kicked due to failed verification! (Username: `{self.member_username}`)",
+                f"❌ {member.mention} has been kicked due to failed verification!",
                 ephemeral=True
             )
             
@@ -594,6 +594,84 @@ class VerificationView(discord.ui.View):
                 ephemeral=True
             )
             print(f"❌ Error in deny button: {e}")
+            import traceback
+            traceback.print_exc()
+
+# ============================================
+# CHECK CHANNEL VIEW - NEW
+# ============================================
+
+class CheckChannelView(discord.ui.View):
+    """View for check channel with close button"""
+    
+    def __init__(self, member, channel):
+        super().__init__(timeout=None)
+        self.member = member
+        self.member_id = member.id
+        self.member_username = member.name
+        self.channel = channel
+    
+    @discord.ui.button(label="🔒 Close Check", style=discord.ButtonStyle.red)
+    async def close_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Close the check channel"""
+        
+        # Only moderators can close
+        if not interaction.user.guild_permissions.moderate_members and not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "❌ Only moderators can close checks!",
+                ephemeral=True
+            )
+            return
+        
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            guild = interaction.guild
+            member = guild.get_member(self.member_id)
+            
+            # Get the roles
+            verified_role = guild.get_role(VERIFIED_ROLE_ID) if VERIFIED_ROLE_ID else None
+            check_role = guild.get_role(CHECK_ROLE_ID) if CHECK_ROLE_ID else None
+            
+            # Remove check role and add verified role back
+            if member:
+                if check_role and check_role in member.roles:
+                    await member.remove_roles(check_role)
+                    print(f"✅ Removed check role from {self.member_username}")
+                
+                if verified_role:
+                    if verified_role not in member.roles:
+                        await member.add_roles(verified_role)
+                        print(f"✅ Re-added verified role to {self.member_username}")
+            
+            # Send close message
+            close_embed = discord.Embed(
+                title="✅ Check Closed",
+                description=f"This check for {self.member_username} has been closed.",
+                color=discord.Color.green(),
+                timestamp=discord.utils.utcnow()
+            )
+            close_embed.add_field(name="Closed By", value=interaction.user.mention, inline=True)
+            close_embed.add_field(name="Member", value=self.member_username, inline=True)
+            
+            if member:
+                close_embed.add_field(
+                    name="Member Status",
+                    value=f"❌ Removed: {check_role.mention if check_role else 'Check Role'}\n✅ Added: {verified_role.mention if verified_role else 'Verified Role'}",
+                    inline=False
+                )
+            
+            await interaction.followup.send(embed=close_embed, ephemeral=True)
+            await self.channel.send(embed=close_embed)
+            
+            print(f"✅ Check closed for {self.member_username} by {interaction.user.name}")
+            
+        except Exception as e:
+            await interaction.followup.send(
+                f"❌ Error closing check: {str(e)}",
+                ephemeral=True
+            )
+            print(f"❌ Error closing check: {e}")
             import traceback
             traceback.print_exc()
 
@@ -639,7 +717,7 @@ async def spawn_verification_for_member(member, guild):
         
         embed.set_footer(text="Use the buttons below to accept or deny this verification")
         
-        # Send to verification channel with buttons - PASS USERNAME
+        # Send to verification channel with buttons
         view = VerificationView(member, answers, member_username=member.name)
         await verify_channel.send(embed=embed, view=view)
         
@@ -713,193 +791,6 @@ async def verify_all(interaction: discord.Interaction):
     await interaction.followup.send(embed=embed)
     print(f"✅ /verify-all spawned {total} background tasks\n")
 
-@bot.tree.command(name="kickrole", description="Remove all members from a specific group role (Admin only)")
-@app_commands.describe(role_name="The exact name of the role (e.g., 'Member', 'VIP')")
-@app_commands.checks.has_permissions(administrator=True)
-async def kickrole(interaction: discord.Interaction, role_name: str):
-    """Remove all members from a specific Roblox group role"""
-    
-    if not ROBLOX_COOKIE:
-        await interaction.response.send_message(
-            "❌ Roblox cookie not configured!",
-            ephemeral=True
-        )
-        return
-    
-    await interaction.response.defer(ephemeral=True)
-    
-    print(f"🗑️ /kickrole called by {interaction.user} - Role: {role_name}")
-    
-    async with aiohttp.ClientSession() as session:
-        # Step 1: Get all group roles
-        print(f"📋 Fetching group roles...")
-        roles = await get_group_roles(session)
-        
-        if not roles:
-            await interaction.followup.send(
-                "❌ Failed to fetch group roles!",
-                ephemeral=True
-            )
-            return
-        
-        # Step 2: Find the role by name
-        target_role = None
-        for role in roles:
-            if role.get('name', '').lower() == role_name.lower():
-                target_role = role
-                break
-        
-        if not target_role:
-            # Show available roles
-            available_roles = "\n".join([f"• {role.get('name')} (ID: {role.get('id')})" for role in roles])
-            await interaction.followup.send(
-                f"❌ Role `{role_name}` not found!\n\n**Available roles:**\n{available_roles}",
-                ephemeral=True
-            )
-            return
-        
-        role_id = target_role.get('id')
-        print(f"✅ Found role: {target_role.get('name')} (ID: {role_id})")
-        
-        # Step 3: Get CSRF token
-        print(f"🔑 Getting CSRF token...")
-        csrf_token = await get_csrf_token(session)
-        
-        if not csrf_token:
-            await interaction.followup.send(
-                "❌ Failed to get CSRF token!",
-                ephemeral=True
-            )
-            return
-        
-        # Step 4: Get all members of this role (with pagination)
-        print(f"👥 Fetching members of role {role_name}...")
-        all_members = []
-        cursor = None
-        
-        while True:
-            result = await get_role_members(session, role_id, cursor)
-            
-            if not result:
-                break
-            
-            members = result.get('data', [])
-            all_members.extend(members)
-            
-            cursor = result.get('nextPageCursor')
-            if not cursor:
-                break
-            
-            await asyncio.sleep(0.5)  # Rate limiting
-        
-        if not all_members:
-            await interaction.followup.send(
-                f"ℹ️ No members found in role `{role_name}`!",
-                ephemeral=True
-            )
-            return
-        
-        total_members = len(all_members)
-        print(f"📊 Found {total_members} member(s) in role {role_name}")
-        
-        # Step 5: Send confirmation
-        embed = discord.Embed(
-            title="⚠️ Confirm Bulk Kick",
-            description=f"Are you sure you want to kick **{total_members}** member(s) from the `{role_name}` role?",
-            color=discord.Color.orange()
-        )
-        embed.add_field(name="Group ID", value=f"`{ROBLOX_GROUP_ID}`", inline=True)
-        embed.add_field(name="Role", value=f"`{role_name}`", inline=True)
-        embed.add_field(name="Members to Kick", value=f"`{total_members}`", inline=True)
-        embed.set_footer(text="This action cannot be undone!")
-        
-        await interaction.followup.send(
-            embed=embed,
-            ephemeral=True
-        )
-        
-        # Ask for confirmation
-        confirmation = await interaction.followup.send(
-            "⚠️ Type `CONFIRM` to proceed with kicking all members:",
-            ephemeral=True,
-            wait=True
-        )
-        
-        def check(m):
-            return m.author == interaction.user and m.channel == interaction.channel
-        
-        try:
-            msg = await bot.wait_for('message', timeout=30.0, check=check)
-            
-            if msg.content.upper() != 'CONFIRM':
-                await interaction.followup.send(
-                    "❌ Operation cancelled.",
-                    ephemeral=True
-                )
-                return
-            
-            # Delete the confirmation message
-            try:
-                await msg.delete()
-            except:
-                pass
-            
-        except asyncio.TimeoutError:
-            await interaction.followup.send(
-                "❌ Confirmation timed out. Operation cancelled.",
-                ephemeral=True
-            )
-            return
-        
-        # Step 6: Kick all members
-        kicked = 0
-        failed = 0
-        
-        status_embed = discord.Embed(
-            title="🔄 Kicking Members...",
-            description=f"Progress: 0/{total_members}",
-            color=discord.Color.blue()
-        )
-        status_msg = await interaction.followup.send(embed=status_embed, ephemeral=True)
-        
-        for i, member in enumerate(all_members, 1):
-            user_id = member.get('userId')
-            username = member.get('username', 'Unknown')
-            
-            print(f"[{i}/{total_members}] Kicking {username} (ID: {user_id})...")
-            
-            success, message = await kick_user_from_group(session, user_id, csrf_token)
-            
-            if success:
-                kicked += 1
-                print(f"   ✅ Kicked {username}")
-            else:
-                failed += 1
-                print(f"   ❌ Failed to kick {username}: {message}")
-            
-            # Update status every 5 members
-            if i % 5 == 0 or i == total_members:
-                status_embed.description = f"Progress: {i}/{total_members}\n✅ Kicked: {kicked}\n❌ Failed: {failed}"
-                try:
-                    await status_msg.edit(embed=status_embed)
-                except:
-                    pass
-            
-            await asyncio.sleep(0.5)  # Rate limiting
-        
-        # Final report
-        final_embed = discord.Embed(
-            title="✅ Bulk Kick Complete",
-            color=discord.Color.green() if failed == 0 else discord.Color.orange()
-        )
-        final_embed.add_field(name="Role", value=f"`{role_name}`", inline=True)
-        final_embed.add_field(name="Total Members", value=f"`{total_members}`", inline=True)
-        final_embed.add_field(name="Successfully Kicked", value=f"`{kicked}`", inline=True)
-        final_embed.add_field(name="Failed", value=f"`{failed}`", inline=True)
-        
-        await interaction.followup.send(embed=final_embed, ephemeral=True)
-        print(f"✅ Bulk kick complete: {kicked} kicked, {failed} failed")
-
 @bot.tree.command(name="verify", description="Start or restart your server verification")
 async def verify(interaction: discord.Interaction):
     """Allow members to start verification"""
@@ -935,6 +826,231 @@ async def verify(interaction: discord.Interaction):
     
     # Spawn verification in background
     asyncio.create_task(spawn_verification_for_member(interaction.user, guild))
+
+@bot.tree.command(name="check", description="Create an age check channel for a member (Moderator only)")
+@app_commands.describe(member="The member to check on")
+@app_commands.checks.has_permissions(moderate_members=True)
+async def check(interaction: discord.Interaction, member: discord.Member):
+	"""Create a check channel for discussing a member - member loses verified role"""
+	
+	await interaction.response.defer(ephemeral=True)
+	
+	try:
+		guild = interaction.guild
+		
+		# Get roles
+		verified_role = guild.get_role(VERIFIED_ROLE_ID) if VERIFIED_ROLE_ID else None
+		check_role = guild.get_role(CHECK_ROLE_ID) if CHECK_ROLE_ID else None
+		
+		if not verified_role:
+			await interaction.followup.send(
+				"❌ Configuration error: Verified role not found!",
+				ephemeral=True
+			)
+			return
+		
+		if not check_role:
+			await interaction.followup.send(
+				"❌ Configuration error: Check role not found! Make sure CHECK_ROLE_ID is set correctly.",
+				ephemeral=True
+			)
+			return
+		
+		# Remove verified role and add check role
+		if verified_role in member.roles:
+			await member.remove_roles(verified_role)
+			print(f"✅ Removed verified role from {member.name}")
+		
+		if check_role not in member.roles:
+			await member.add_roles(check_role)
+			print(f"✅ Added check role to {member.name}")
+		
+		# Create channel name: age-check-[member_id]
+		channel_name = f"age-check-{member.id}"
+		
+		# Create the channel in the main server (no category)
+		try:
+			channel = await guild.create_text_channel(
+				name=channel_name,
+				topic=f"Check for {member.name} (ID: {member.id})"
+			)
+			print(f"✅ Channel created: {channel_name}")
+		except discord.Forbidden:
+			await interaction.followup.send(
+				"❌ I don't have permission to create channels!",
+				ephemeral=True
+			)
+			return
+		
+		# Set up permissions
+		# By default, @everyone can't see it
+		await channel.set_permissions(
+			guild.default_role,
+			view_channel=False
+		)
+		
+		# Allow the member to see and chat
+		await channel.set_permissions(
+			member,
+			view_channel=True,
+			send_messages=True  # Member CAN send messages
+		)
+		
+		# Allow all moderators to see and talk
+		for role in guild.roles:
+			if role.permissions.moderate_members or role.permissions.administrator:
+				await channel.set_permissions(
+					role,
+					view_channel=True,
+					send_messages=True
+				)
+		
+		# Allow the user who created the check
+		await channel.set_permissions(
+			interaction.user,
+			view_channel=True,
+			send_messages=True
+		)
+		
+		print(f"✅ Set permissions for {channel_name}")
+		
+		# Send the check embed
+		check_embed = discord.Embed(
+			title=f"👤 Member Check: {member.name}",
+			description=f"Check channel for {member.mention}",
+			color=discord.Color.blue(),
+			timestamp=discord.utils.utcnow()
+		)
+		check_embed.add_field(
+			name="Member",
+			value=f"{member.mention}",
+			inline=True
+		)
+		check_embed.add_field(
+			name="Username",
+			value=f"`{member.name}`",
+			inline=True
+		)
+		check_embed.add_field(
+			name="User ID",
+			value=f"`{member.id}`",
+			inline=True
+		)
+		check_embed.add_field(
+			name="Join Date",
+			value=f"{member.joined_at.strftime('%Y-%m-%d %H:%M:%S') if member.joined_at else 'Unknown'}",
+			inline=True
+		)
+		check_embed.add_field(
+			name="Account Created",
+			value=f"{member.created_at.strftime('%Y-%m-%d %H:%M:%S')}",
+			inline=True
+		)
+		check_embed.add_field(
+			name="Roles",
+			value=", ".join([role.mention for role in member.roles if role != guild.default_role]) or "No roles",
+			inline=False
+		)
+		check_embed.add_field(
+			name="Is Bot",
+			value="✅ Yes" if member.bot else "❌ No",
+			inline=True
+		)
+		check_embed.add_field(
+			name="Check Status",
+			value="🔍 Pending Review",
+			inline=True
+		)
+		check_embed.set_footer(text="Use the button below to close this check when done")
+		check_embed.set_thumbnail(url=member.avatar.url if member.avatar else None)
+		
+		# Send embed with close button
+		view = CheckChannelView(member, channel)
+		await channel.send(embed=check_embed, view=view)
+		
+		# Send info message
+		await channel.send(
+			f"✅ Check channel created by {interaction.user.mention}\n"
+			f"🔍 Moderators are reviewing your account\n"
+			f"📝 Click the button above to close this check when done"
+		)
+		
+		# Notify the moderator who created the check
+		notify_embed = discord.Embed(
+			title="✅ Check Channel Created",
+			description=f"Check channel created for {member.mention}",
+			color=discord.Color.green(),
+			timestamp=discord.utils.utcnow()
+		)
+		notify_embed.add_field(
+			name="Member",
+			value=member.mention,
+			inline=True
+		)
+		notify_embed.add_field(
+			name="Channel",
+			value=channel.mention,
+			inline=True
+		)
+		notify_embed.add_field(
+			name="Channel Name",
+			value=f"`{channel_name}`",
+			inline=True
+		)
+		notify_embed.add_field(
+			name="Action Taken",
+			value=f"❌ Removed: {verified_role.mention}\n✅ Added: {check_role.mention}",
+			inline=False
+		)
+		notify_embed.add_field(
+			name="Created By",
+			value=interaction.user.mention,
+			inline=False
+		)
+		
+		await interaction.followup.send(embed=notify_embed, ephemeral=True)
+		
+		# Send DM to member notifying them
+		try:
+			dm_embed = discord.Embed(
+				title="⚠️ Account Check",
+				description="Your account is under review by moderators.",
+				color=discord.Color.orange(),
+				timestamp=discord.utils.utcnow()
+			)
+			dm_embed.add_field(
+				name="What Happened",
+				value="Your verified role has been temporarily removed while moderators review your account.",
+				inline=False
+			)
+			dm_embed.add_field(
+				name="What to Do",
+				value=f"Please go to {channel.mention} and wait for moderators to review your information.",
+				inline=False
+			)
+			dm_embed.add_field(
+				name="Note",
+				value="This is a routine check. Please remain calm and patient.",
+				inline=False
+			)
+			dm_embed.set_footer(text="Moderators will close this check when done")
+			
+			await member.send(embed=dm_embed)
+			print(f"📨 Sent check notification DM to {member.name}")
+		except discord.Forbidden:
+			print(f"⚠️ Could not send DM to {member.name} (DMs disabled)")
+		
+		print(f"✅ Check channel created for {member.name} by {interaction.user.name}")
+		print(f"   Channel: {channel.name} (ID: {channel.id})")
+		
+	except Exception as e:
+		await interaction.followup.send(
+			f"❌ Error creating check channel: {str(e)}",
+			ephemeral=True
+		)
+		print(f"❌ Error in /check command: {e}")
+		import traceback
+		traceback.print_exc()
 
 @bot.tree.command(name="requestaccess", description="Request access to the Roblox group")
 @app_commands.describe(roblox_username="Your exact Roblox username")
@@ -1166,15 +1282,18 @@ async def nsfw_verify(interaction: discord.Interaction, image: discord.Attachmen
         traceback.print_exc()
 
 # Error handlers for slash commands
-@kickrole.error
-async def kickrole_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    if isinstance(error, app_commands.MissingPermissions):
-        await interaction.response.send_message("❌ You need Administrator permission to use this command!", ephemeral=True)
-
 @verify_all.error
 async def verify_all_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.MissingPermissions):
         await interaction.response.send_message("❌ You need Administrator permission to use this command!", ephemeral=True)
+
+@check.error
+async def check_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+	if isinstance(error, app_commands.MissingPermissions):
+		await interaction.response.send_message(
+			"❌ You need Moderator permission to use this command!",
+			ephemeral=True
+		)
 
 # ============================================
 # BOT EVENTS
@@ -1268,7 +1387,7 @@ async def on_member_join(member):
         
         embed.set_footer(text="Use the buttons below to accept or deny this verification")
         
-        # Send to verification channel with buttons - PASS USERNAME
+        # Send to verification channel with buttons
         view = VerificationView(member, answers, member_username=member.name)
         msg = await verify_channel.send(embed=embed, view=view)
         
@@ -1307,11 +1426,14 @@ async def on_ready():
     print(f"   Member Verification Channel: {MEMBER_VERIFY_CHANNEL_ID}")
     print(f"   Pending Role: {PENDING_ROLE_ID}")
     print(f"   Verified Role: {VERIFIED_ROLE_ID}")
+    print(f"   Check Role: {CHECK_ROLE_ID}")
     print(f"   Roblox Group ID: {ROBLOX_GROUP_ID}")
     print("\n💡 Available Commands:")
     print("   - /nsfw-verify: Submit image for verification")
     print("   - /requestaccess: Request to join Roblox group")
-    print("   - /kickrole: Bulk kick members from a role")
+    print("   - /verify: Start verification")
+    print("   - /verify-all: Send verification to all pending members")
+    print("   - /check: Create age check channel for a member")
     print("\n📝 Events:")
     print("   - Member Join: Automatic verification questionnaire")
 
