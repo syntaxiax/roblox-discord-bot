@@ -638,15 +638,23 @@ class CheckChannelView(discord.ui.View):
                     await member.remove_roles(check_role)
                     print(f"✅ Removed check role from {self.member_username}")
             
-            # Send close message
+            # Calculate deletion time
+            deletion_time = discord.utils.utcnow() + discord.utils.timedelta(seconds=30)
+            
+            # Send close message with timestamp
             close_embed = discord.Embed(
                 title="✅ Check Closed",
-                description=f"This check for {self.member_username} has been closed.\nChannel will be deleted in 1-2 minutes.",
+                description=f"This check for {self.member_username} has been closed.",
                 color=discord.Color.green(),
                 timestamp=discord.utils.utcnow()
             )
             close_embed.add_field(name="Closed By", value=interaction.user.mention, inline=True)
             close_embed.add_field(name="Member", value=self.member_username, inline=True)
+            close_embed.add_field(
+                name="⏰ Channel Deletion",
+                value=f"Channel will be deleted at <t:{int(deletion_time.timestamp())}:T> (<t:{int(deletion_time.timestamp())}:R>)",
+                inline=False
+            )
             
             if member:
                 close_embed.add_field(
@@ -656,20 +664,31 @@ class CheckChannelView(discord.ui.View):
                 )
             
             await interaction.followup.send(embed=close_embed, ephemeral=True)
-            await self.channel.send(embed=close_embed)
+            close_msg = await self.channel.send(embed=close_embed)
             
             print(f"✅ Check closed for {self.member_username} by {interaction.user.name}")
+            print(f"📅 Channel will be deleted at: {deletion_time}")
             
-            # Schedule channel deletion after 90 seconds (1.5 minutes)
+            # Schedule channel deletion after 30 seconds
             async def delete_channel_after_delay():
-                await asyncio.sleep(90)  # Wait 90 seconds
+                print(f"⏳ Waiting 30 seconds before deleting channel: {self.channel.name}")
+                await asyncio.sleep(30)  # Wait 30 seconds
                 try:
-                    await self.channel.delete()
-                    print(f"✅ Deleted check channel: {self.channel.name}")
+                    print(f"🗑️ Attempting to delete channel: {self.channel.name} (ID: {self.channel.id})")
+                    await self.channel.delete(reason=f"Check closed for {self.member_username}")
+                    print(f"✅ Successfully deleted check channel: {self.channel.name}")
+                except discord.NotFound:
+                    print(f"⚠️ Channel already deleted: {self.channel.name}")
+                except discord.Forbidden:
+                    print(f"❌ Permission denied to delete channel: {self.channel.name}")
                 except Exception as e:
                     print(f"❌ Error deleting channel: {e}")
+                    import traceback
+                    traceback.print_exc()
             
-            asyncio.create_task(delete_channel_after_delay())
+            # Create the task
+            task = asyncio.create_task(delete_channel_after_delay())
+            print(f"📋 Task created for channel deletion: {task}")
             
         except Exception as e:
             await interaction.followup.send(
