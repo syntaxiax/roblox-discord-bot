@@ -260,6 +260,8 @@ async def collect_member_verification(member):
     """
     Collect verification answers from a member via DMs
     Returns: (answers_dict, success: bool)
+    
+    FIXED: Now properly re-asks questions with invalid answers
     """
     try:
         # Send intro message
@@ -278,8 +280,12 @@ async def collect_member_verification(member):
         await member.send(embed=intro_embed)
         
         answers = {}
+        question_index = 0  # Use index instead of for loop variable
         
-        for i, question in enumerate(VERIFY_QUESTIONS, 1):
+        while question_index < len(VERIFY_QUESTIONS):
+            question = VERIFY_QUESTIONS[question_index]
+            i = question_index + 1  # For display purposes (1-indexed)
+            
             # Send question
             question_embed = discord.Embed(
                 title=f"Question {i}/{len(VERIFY_QUESTIONS)}",
@@ -296,11 +302,11 @@ async def collect_member_verification(member):
                 return m.author == member and isinstance(m.channel, discord.DMChannel)
             
             try:
-                msg = await bot.wait_for('message', check=check)  # No timeout
+                msg = await bot.wait_for('message', check=check, timeout=300)  # 5 minute timeout
                 answer = msg.content.strip()
                 
                 # Validate specific questions
-                if i == 1:  # Age question
+                if i == 1:  # Age question (question_1)
                     valid, validated_answer = is_valid_age(answer)
                     if not valid:
                         error_embed = discord.Embed(
@@ -309,11 +315,11 @@ async def collect_member_verification(member):
                             color=discord.Color.red()
                         )
                         await member.send(embed=error_embed)
-                        i -= 1
+                        # DON'T increment question_index, re-ask this question
                         continue
                     answers[f"question_{i}"] = validated_answer
                 
-                elif i in [6, 7, 8]:  # Questions requiring links
+                elif i in [6, 7, 8]:  # Questions requiring links (question_6, 7, 8)
                     valid, validated_answer = is_valid_link(answer)
                     if not valid:
                         error_embed = discord.Embed(
@@ -322,14 +328,15 @@ async def collect_member_verification(member):
                             color=discord.Color.red()
                         )
                         await member.send(embed=error_embed)
-                        i -= 1
+                        # DON'T increment question_index, re-ask this question
                         continue
                     answers[f"question_{i}"] = validated_answer
                 
                 else:
+                    # All other questions are accepted as-is
                     answers[f"question_{i}"] = answer
                 
-                # Show progress
+                # Show progress (only if answer was valid)
                 progress_embed = discord.Embed(
                     title="✅ Answer Recorded",
                     description=f"Progress: {i}/{len(VERIFY_QUESTIONS)}",
@@ -337,11 +344,25 @@ async def collect_member_verification(member):
                 )
                 await member.send(embed=progress_embed)
                 
+                # Move to next question
+                question_index += 1
+                
+            except asyncio.TimeoutError:
+                # 5 minute timeout per question
+                timeout_embed = discord.Embed(
+                    title="⏱️ Timeout",
+                    description="You took too long to answer. Verification cancelled.",
+                    color=discord.Color.red()
+                )
+                await member.send(embed=timeout_embed)
+                print(f"⏱️ Verification timeout for {member.name} on question {i}")
+                return answers, False
+            
             except Exception as e:
-                print(f"❌ Error waiting for response: {e}")
+                print(f"❌ Error waiting for response from {member.name}: {e}")
                 return answers, False
         
-        # Success message
+        # Success message (only sent after ALL questions answered)
         success_embed = discord.Embed(
             title="✅ Verification Complete",
             description="Your answers have been submitted for review. The staff will review your responses and notify you of the decision.",
@@ -409,13 +430,16 @@ async def accept_group_join_request(username):
             return False, f"❌ Failed to accept request: {message}", user_id
 
 # ============================================
-# VERIFICATION BUTTONS VIEW
+# VERIFICATION BUTTONS VIEW - UPDATED WITH USERNAME
 # ============================================
 
 class VerificationView(discord.ui.View):
-    def __init__(self, member, answers):
+    def __init__(self, member, answers, member_username=None):
         super().__init__(timeout=None)
         self.member = member
+        self.member_id = member.id
+        self.member_username = member_username or member.name  # Store username
+        self.member_display_name = member.display_name  # Store display name
         self.answers = answers
         self.verified = None
     
@@ -434,13 +458,19 @@ class VerificationView(discord.ui.View):
         
         try:
             guild = interaction.guild
-            member = guild.get_member(self.member.id)
+            member = guild.get_member(self.member_id)
             
             if not member:
                 await interaction.followup.send(
-                    "❌ Member not found in guild!",
+                    f"⚠️ Member not found in guild (they may have left). Username was: `{self.member_username}`",
                     ephemeral=True
                 )
+                # Still update the message to show it was accepted
+                original_embed = interaction.message.embeds[0]
+                original_embed.color = discord.Color.green()
+                original_embed.title = "✅ ACCEPTED"
+                original_embed.description = f"Approved by {interaction.user.mention}\nUsername: `{self.member_username}`"
+                await interaction.message.edit(embed=original_embed, view=None)
                 return
             
             # Get roles
@@ -473,20 +503,20 @@ class VerificationView(discord.ui.View):
             except discord.Forbidden:
                 print(f"⚠️ Could not send DM to {member} (DMs disabled)")
             
-            # Update the embed to show it was accepted
+            # Update the embed to show it was accepted - KEEP USERNAME
             original_embed = interaction.message.embeds[0]
             original_embed.color = discord.Color.green()
             original_embed.title = "✅ ACCEPTED"
-            original_embed.description = f"Approved by {interaction.user.mention}"
+            original_embed.description = f"Approved by {interaction.user.mention}\nUsername: `{self.member_username}`"
             
             await interaction.message.edit(embed=original_embed, view=None)
             
             await interaction.followup.send(
-                f"✅ {member.mention} has been verified!",
+                f"✅ {member.mention} has been verified! (Username: `{self.member_username}`)",
                 ephemeral=True
             )
             
-            print(f"✅ {member.name} approved by {interaction.user.name}")
+            print(f"✅ {self.member_username} approved by {interaction.user.name}")
             
         except Exception as e:
             await interaction.followup.send(
@@ -512,13 +542,19 @@ class VerificationView(discord.ui.View):
         
         try:
             guild = interaction.guild
-            member = guild.get_member(self.member.id)
+            member = guild.get_member(self.member_id)
             
             if not member:
                 await interaction.followup.send(
-                    "❌ Member not found in guild!",
+                    f"⚠️ Member not found in guild (they may have already left). Username was: `{self.member_username}`",
                     ephemeral=True
                 )
+                # Still update the message to show it was denied
+                original_embed = interaction.message.embeds[0]
+                original_embed.color = discord.Color.red()
+                original_embed.title = "❌ DENIED"
+                original_embed.description = f"Denied by {interaction.user.mention}\nUsername: `{self.member_username}`"
+                await interaction.message.edit(embed=original_embed, view=None)
                 return
             
             # Send rejection message to member
@@ -537,20 +573,20 @@ class VerificationView(discord.ui.View):
             # Kick the member
             await member.kick(reason="Verification denied")
             
-            # Update the embed to show it was denied
+            # Update the embed to show it was denied - KEEP USERNAME
             original_embed = interaction.message.embeds[0]
             original_embed.color = discord.Color.red()
             original_embed.title = "❌ DENIED"
-            original_embed.description = f"Denied by {interaction.user.mention}"
+            original_embed.description = f"Denied by {interaction.user.mention}\nUsername: `{self.member_username}`"
             
             await interaction.message.edit(embed=original_embed, view=None)
             
             await interaction.followup.send(
-                f"❌ {member.mention} has been kicked due to failed verification!",
+                f"❌ {member.mention} has been kicked due to failed verification! (Username: `{self.member_username}`)",
                 ephemeral=True
             )
             
-            print(f"❌ {member.name} rejected and kicked by {interaction.user.name}")
+            print(f"❌ {self.member_username} rejected and kicked by {interaction.user.name}")
             
         except Exception as e:
             await interaction.followup.send(
@@ -603,8 +639,8 @@ async def spawn_verification_for_member(member, guild):
         
         embed.set_footer(text="Use the buttons below to accept or deny this verification")
         
-        # Send to verification channel with buttons
-        view = VerificationView(member, answers)
+        # Send to verification channel with buttons - PASS USERNAME
+        view = VerificationView(member, answers, member_username=member.name)
         await verify_channel.send(embed=embed, view=view)
         
         print(f"✅ Verification submitted for {member.name}")
@@ -1232,8 +1268,8 @@ async def on_member_join(member):
         
         embed.set_footer(text="Use the buttons below to accept or deny this verification")
         
-        # Send to verification channel with buttons
-        view = VerificationView(member, answers)
+        # Send to verification channel with buttons - PASS USERNAME
+        view = VerificationView(member, answers, member_username=member.name)
         msg = await verify_channel.send(embed=embed, view=view)
         
         print(f"✅ Verification submitted for {member.name} - Message ID: {msg.id}")
@@ -1302,10 +1338,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
-
-
-
-
-
