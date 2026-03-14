@@ -629,25 +629,19 @@ class CheckChannelView(discord.ui.View):
             guild = interaction.guild
             member = guild.get_member(self.member_id)
             
-            # Get the roles
-            verified_role = guild.get_role(VERIFIED_ROLE_ID) if VERIFIED_ROLE_ID else None
+            # Get the check role
             check_role = guild.get_role(CHECK_ROLE_ID) if CHECK_ROLE_ID else None
             
-            # Remove check role and add verified role back
+            # Remove check role ONLY (don't add verified role)
             if member:
                 if check_role and check_role in member.roles:
                     await member.remove_roles(check_role)
                     print(f"✅ Removed check role from {self.member_username}")
-                
-                if verified_role:
-                    if verified_role not in member.roles:
-                        await member.add_roles(verified_role)
-                        print(f"✅ Re-added verified role to {self.member_username}")
             
             # Send close message
             close_embed = discord.Embed(
                 title="✅ Check Closed",
-                description=f"This check for {self.member_username} has been closed.",
+                description=f"This check for {self.member_username} has been closed.\nChannel will be deleted in 1-2 minutes.",
                 color=discord.Color.green(),
                 timestamp=discord.utils.utcnow()
             )
@@ -657,7 +651,7 @@ class CheckChannelView(discord.ui.View):
             if member:
                 close_embed.add_field(
                     name="Member Status",
-                    value=f"❌ Removed: {check_role.mention if check_role else 'Check Role'}\n✅ Added: {verified_role.mention if verified_role else 'Verified Role'}",
+                    value=f"❌ Removed: {check_role.mention if check_role else 'Check Role'}",
                     inline=False
                 )
             
@@ -665,6 +659,17 @@ class CheckChannelView(discord.ui.View):
             await self.channel.send(embed=close_embed)
             
             print(f"✅ Check closed for {self.member_username} by {interaction.user.name}")
+            
+            # Schedule channel deletion after 90 seconds (1.5 minutes)
+            async def delete_channel_after_delay():
+                await asyncio.sleep(90)  # Wait 90 seconds
+                try:
+                    await self.channel.delete()
+                    print(f"✅ Deleted check channel: {self.channel.name}")
+                except Exception as e:
+                    print(f"❌ Error deleting channel: {e}")
+            
+            asyncio.create_task(delete_channel_after_delay())
             
         except Exception as e:
             await interaction.followup.send(
