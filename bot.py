@@ -7,6 +7,7 @@ import re
 from discord.ext import commands, tasks
 from discord import app_commands
 from aiohttp import web
+from datetime import timedelta
 
 # Discord bot setup
 intents = discord.Intents.default()
@@ -639,7 +640,7 @@ class CheckChannelView(discord.ui.View):
                     print(f"✅ Removed check role from {self.member_username}")
             
             # Calculate deletion time
-            deletion_time = discord.utils.utcnow() + discord.utils.timedelta(seconds=30)
+            deletion_time = discord.utils.utcnow() + timedelta(seconds=30)
             
             # Send close message with timestamp
             close_embed = discord.Embed(
